@@ -4,13 +4,14 @@ use ratatui::{
     backend::CrosstermBackend,
     crossterm::{
         event::{self, Event, KeyCode},
-        terminal::{
-            disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
-        },
+        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
         ExecutableCommand,
     },
-    widgets::{Block, Paragraph},
-    Frame, Terminal,
+    layout::{Constraint, Direction, Layout},
+    widgets::Block,
+    widgets::Paragraph,
+    widgets::Borders,
+    Frame, Terminal
 };
 
 fn main() -> io::Result<()> {
@@ -41,8 +42,27 @@ fn handle_events() -> io::Result<bool> {
 }
 
 fn ui(frame: &mut Frame) {
+
+    let outer_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(vec![Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(frame.area());
+
+    let inner_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints(vec![Constraint::Percentage(25), Constraint::Percentage(75)])
+        .split(outer_layout[1]);
+
     frame.render_widget(
-        Paragraph::new("Hello World!").block(Block::bordered().title("Greeting")),
-        frame.area(),
+        Paragraph::new("outer 0").block(Block::new().borders(Borders::ALL)),
+        outer_layout[0],
+    );
+    frame.render_widget(
+        Paragraph::new("inner 0").block(Block::new().borders(Borders::ALL)),
+        inner_layout[0],
+    );
+    frame.render_widget(
+        Paragraph::new("inner 1").block(Block::new().borders(Borders::ALL)),
+        inner_layout[1],
     );
 }
