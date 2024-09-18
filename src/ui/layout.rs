@@ -2,9 +2,14 @@ use std::rc::Rc;
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
+    style::Modifier,
+    style::Style,
     widgets::Block,
     widgets::Borders,
     widgets::Paragraph,
+    widgets::Row,
+    widgets::Table,
+    widgets::TableState,
     Frame,
 };
 
@@ -14,31 +19,43 @@ pub fn ui(frame: &mut Frame) {
     let header_wrapper = wrapper[0];
     let matrix_wrapper = wrapper[1];
 
-    let width = 16;
-    let height = 32 / width;
-
-    let matrix_columns = matrix_column_layout(matrix_wrapper, width);
-
-    // populate grid
-    for n in 1..(width + 1) {
-        let rows = matrix_rows_layout(matrix_columns[n as usize], height);
-
-        for n in 0..(height - 1) {
-            frame.render_widget(Block::new().borders(Borders::ALL), rows[n as usize]);
-        }
-    }
+    const WIDTH: usize = 16;
+    const HEIGHT: usize = 2;
 
     frame.render_widget(
         Paragraph::new(" # header").block(Block::new().borders(Borders::ALL)),
         header_wrapper,
     );
 
-    for n in 0..width {
-        frame.render_widget(
-            Block::new().borders(Borders::ALL),
-            matrix_columns[n as usize + 1],
-        );
+    let mut table_state = TableState::default();
+
+
+    let vector = generate_array(WIDTH, HEIGHT);
+
+    let mut rows: [Row<'static>; HEIGHT];
+
+    // populate array
+    for i in (0..4) {
+        &rows[i] = match vector.get(i){
+            None => Row::new(["failure"]),
+            Some(quotient) => {
+                quotient
+            },
+        }
     }
+
+    let widths = [
+        Constraint::Length(5),
+        Constraint::Length(5),
+        Constraint::Length(10),
+    ];
+
+    let table = Table::new(rows, widths)
+        .block(Block::new().title("matrix"))
+        .highlight_style(Style::new().add_modifier(Modifier::REVERSED))
+        .highlight_symbol(">>");
+
+    frame.render_stateful_widget(table, matrix_wrapper, &mut table_state);
 }
 
 fn wrapper(frame: &mut Frame) -> Rc<[Rect]> {
@@ -48,41 +65,19 @@ fn wrapper(frame: &mut Frame) -> Rc<[Rect]> {
         .split(frame.area());
 }
 
-fn matrix_column_layout(parent: Rect, width: u32) -> Rc<[Rect]> {
-    let mut constrains = Vec::with_capacity(width as usize + 2);
-    let min_margins = 5;
-    let mut n = 0;
+// src: https://stackoverflow.com/questions/59164456/how-do-i-return-an-array-from-a-rust-function
+fn generate_array(width: usize, height: usize) -> Vec<Row<'static>> {
+        let mut arr = Vec::with_capacity(height);
 
-    // left padding
-    constrains.push(Constraint::Min(min_margins));
+        for item in arr.iter_mut() {
+            let mut row = Vec::with_capacity(width);
 
-    // columns
-    while n < width {
-        constrains.push(Constraint::Max(3));
-        n += 1;
-    }
+            for _n in 1..width {
+                row.push("hello");
+            }
 
-    // right padding
-    constrains.push(Constraint::Min(min_margins));
-
-    return Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints(constrains)
-        .split(parent);
-}
-
-fn matrix_rows_layout(parent: Rect, height: u32) -> Rc<[Rect]> {
-    let mut constrains = Vec::with_capacity(height as usize);
-    let mut n = 0;
-
-    // columns
-    while n < height {
-        constrains.push(Constraint::Ratio(1, height));
-        n += 1;
-    }
-
-    return Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(constrains)
-        .split(parent);
+            *item = Row::new(row);
+        }
+        arr
+    
 }
