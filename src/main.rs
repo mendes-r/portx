@@ -1,4 +1,4 @@
-#[path = "ui/layout.rs"]
+#[path = "facade/layout.rs"]
 mod layout;
 
 use std::io::{self, stdout};
@@ -20,7 +20,7 @@ fn main() -> io::Result<()> {
 
     let mut should_quit = false;
     while !should_quit {
-        terminal.draw(layout::ui)?;
+        terminal.draw(layout::generate_ui)?;
         should_quit = handle_events()?;
     }
 
