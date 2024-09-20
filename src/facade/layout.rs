@@ -10,14 +10,12 @@ use ratatui::{
     widgets::Block,
     widgets::Borders,
     widgets::Paragraph,
-    widgets::Row,
     widgets::Table,
     widgets::TableState,
     Frame,
 };
 
 pub fn generate_ui(frame: &mut Frame) {
-
     let wrapper = wrapper(frame);
     let header_wrapper = wrapper[0];
     let matrix_wrapper = wrapper[1];
@@ -29,12 +27,20 @@ pub fn generate_ui(frame: &mut Frame) {
 
     let mut table_state = TableState::default();
 
-    let mut content = ports::ports_states();
+    let content = ports::ports_matrix();
 
+    // TODO automat it
     let widths = [
-        Constraint::Length(5),
-        Constraint::Length(5),
-        Constraint::Length(10),
+        Constraint::Length(2),
+        Constraint::Length(2),
+        Constraint::Length(2),
+        Constraint::Length(2),
+        Constraint::Length(2),
+        Constraint::Length(2),
+        Constraint::Length(2),
+        Constraint::Length(2),
+        Constraint::Length(2),
+        Constraint::Length(2),
     ];
 
     let table = Table::new(content, widths)
@@ -43,7 +49,6 @@ pub fn generate_ui(frame: &mut Frame) {
         .highlight_symbol(">>");
 
     frame.render_stateful_widget(table, matrix_wrapper, &mut table_state);
-    
 }
 
 fn wrapper(frame: &mut Frame) -> Rc<[Rect]> {
@@ -52,5 +57,3 @@ fn wrapper(frame: &mut Frame) -> Rc<[Rect]> {
         .constraints(vec![Constraint::Length(5), Constraint::Percentage(100)])
         .split(frame.area());
 }
-
-

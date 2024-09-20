@@ -1,17 +1,18 @@
 use ratatui::widgets::Row;
+use std::usize;
 
-pub fn ports_states() -> [Row<'static>; 256] {
-    let mut arr = Vec::with_capacity(256);
+const WIDTH: usize = 10;
 
-    for item in arr.iter_mut() {
-        let mut row = Vec::with_capacity(256);
+pub fn ports_matrix() -> [Row<'static>; WIDTH] {
+    let array: [Row<'static>; WIDTH] = core::array::from_fn(cb);
+    array
+}
 
-        for _n in 1..256 {
-            row.push("hello");
-        }
-
-        *item = Row::new(row);
+fn cb(i: usize) -> Row<'static> {
+    let mut vec: Vec<String> = Vec::with_capacity(WIDTH);
+    for _n in 0..10 {
+        vec.push(i.to_string());
     }
-    arr
 
+    Row::new(vec)
 }
