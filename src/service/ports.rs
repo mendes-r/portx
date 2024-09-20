@@ -1,18 +1,21 @@
 use ratatui::widgets::Row;
 use std::usize;
 
-const WIDTH: usize = 10;
-
-pub fn ports_matrix() -> [Row<'static>; WIDTH] {
-    let array: [Row<'static>; WIDTH] = core::array::from_fn(cb);
-    array
+pub fn ports_matrix<const LEN: usize>() -> [Row<'static>; LEN] {
+    let matrix: [Row<'static>; LEN] = core::array::from_fn(|i| fill_row(i, LEN));
+    matrix
 }
 
-fn cb(i: usize) -> Row<'static> {
-    let mut vec: Vec<String> = Vec::with_capacity(WIDTH);
-    for _n in 0..10 {
-        vec.push(i.to_string());
-    }
+fn fill_row(i: usize, width: usize) -> Row<'static> {
+    let mut vec: Vec<String> = Vec::with_capacity(i);
+    for n in 0..width {
+        let mut content: String = i.to_string();
+        content.push_str(n.to_string().as_str());
 
+        // TODO overwrite
+        // content = "%".to_owned();
+
+        vec.push(content);
+    }
     Row::new(vec)
 }

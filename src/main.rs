@@ -20,7 +20,7 @@ fn main() -> io::Result<()> {
 
     let mut should_quit = false;
     while !should_quit {
-        terminal.draw(layout::generate_ui)?;
+        terminal.draw(layout::tui)?;
         should_quit = handle_events()?;
     }
 
