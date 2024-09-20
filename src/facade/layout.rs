@@ -10,27 +10,50 @@ use ratatui::{
     Frame,
 };
 
-const WIDTH: usize = 25;
+const WIDTH: usize = 50;
 
 pub fn tui(frame: &mut Frame) {
-    let wrapper = wrapper(frame);
-    let header_wrapper = wrapper[0];
-    let matrix_wrapper = wrapper[1];
-    
+
+    let wrapper = tui_wrapper(frame);
+    let header_wp = wrapper[0];
+    let main_wp = matrix_wrapper(wrapper[1]);
+    let matrix_wp = main_wp[1];
+
     let mut table_state = TableState::default();
     let rows: [Row<'_>; WIDTH] = ports::ports_matrix();
     let table = table::generate_table(rows);
     
     frame.render_widget(
-        Paragraph::new(" # header").block(Block::new().borders(Borders::ALL)),
-        header_wrapper,
+        Paragraph::new("header").block(Block::new().borders(Borders::ALL)),
+        header_wp,
     );
-    frame.render_stateful_widget(table, matrix_wrapper, &mut table_state);
+
+    frame.render_widget(
+        Paragraph::new("left-margin").block(Block::new().borders(Borders::ALL)),
+        main_wp[0],
+    );  
+    frame.render_widget(
+        Paragraph::new("right-margin").block(Block::new().borders(Borders::ALL)),
+        main_wp[2],
+    );
+
+    frame.render_stateful_widget(table, matrix_wp, &mut table_state);
 }
 
-fn wrapper(frame: &mut Frame) -> Rc<[Rect]> {
+fn tui_wrapper(frame: &mut Frame) -> Rc<[Rect]> {
     return Layout::default()
         .direction(Direction::Vertical)
         .constraints(vec![Constraint::Length(5), Constraint::Percentage(100)])
         .split(frame.area());
+}
+
+fn matrix_wrapper(parent: Rect)-> Rc<[Rect]>{
+    Layout::default()
+    .direction(Direction::Horizontal)
+    .constraints(vec![
+        Constraint::Fill(1),
+        Constraint::Percentage(75),
+        Constraint::Fill(1),
+    ])
+    .split(parent)
 }

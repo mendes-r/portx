@@ -1,7 +1,7 @@
 #[path = "facade/layout.rs"]
 mod layout;
 
-use std::io::{self, stdout};
+use std::{io::{self, stdout}, thread::sleep, time::Duration};
 
 use ratatui::{
     backend::CrosstermBackend,
@@ -22,6 +22,7 @@ fn main() -> io::Result<()> {
     while !should_quit {
         terminal.draw(layout::tui)?;
         should_quit = handle_events()?;
+        sleep(Duration::from_millis(500));
     }
 
     disable_raw_mode()?;
