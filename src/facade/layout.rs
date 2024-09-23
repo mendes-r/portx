@@ -10,10 +10,9 @@ use ratatui::{
     Frame,
 };
 
-const WIDTH: usize = 50;
+const WIDTH: usize = 256 + 2; // Columns + 2 for the margins
 
 pub fn tui(frame: &mut Frame) {
-
     let wrapper = tui_wrapper(frame);
     let header_wp = wrapper[0];
     let main_wp = matrix_wrapper(wrapper[1]);
@@ -22,7 +21,7 @@ pub fn tui(frame: &mut Frame) {
     let mut table_state = TableState::default();
     let rows: [Row<'_>; WIDTH] = ports::ports_matrix();
     let table = table::generate_table(rows);
-    
+
     frame.render_widget(
         Paragraph::new("header").block(Block::new().borders(Borders::ALL)),
         header_wp,
@@ -31,7 +30,7 @@ pub fn tui(frame: &mut Frame) {
     frame.render_widget(
         Paragraph::new("left-margin").block(Block::new().borders(Borders::ALL)),
         main_wp[0],
-    );  
+    );
     frame.render_widget(
         Paragraph::new("right-margin").block(Block::new().borders(Borders::ALL)),
         main_wp[2],
@@ -47,13 +46,13 @@ fn tui_wrapper(frame: &mut Frame) -> Rc<[Rect]> {
         .split(frame.area());
 }
 
-fn matrix_wrapper(parent: Rect)-> Rc<[Rect]>{
+fn matrix_wrapper(parent: Rect) -> Rc<[Rect]> {
     Layout::default()
-    .direction(Direction::Horizontal)
-    .constraints(vec![
-        Constraint::Fill(1),
-        Constraint::Percentage(75),
-        Constraint::Fill(1),
-    ])
-    .split(parent)
+        .direction(Direction::Horizontal)
+        .constraints(vec![
+            Constraint::Fill(1),
+            Constraint::Percentage(75),
+            Constraint::Fill(1),
+        ])
+        .split(parent)
 }

@@ -1,5 +1,8 @@
 use ratatui::{
-    layout::Constraint, style::Modifier, style::Style, widgets::{Block, Row, Table, Borders}
+    layout::Constraint,
+    style::Modifier,
+    style::Style,
+    widgets::{Block, Borders, Row, Table},
 };
 
 pub fn generate_table<const WIDTH: usize>(rows: [Row<'static>; WIDTH]) -> Table<'_> {
@@ -14,5 +17,9 @@ pub fn generate_table<const WIDTH: usize>(rows: [Row<'static>; WIDTH]) -> Table<
 }
 
 fn widths_constraints<const WIDTH: usize>() -> [Constraint; WIDTH] {
-    [Constraint::Length(1); WIDTH]
+    let mut widths = [Constraint::Length(1); WIDTH];
+    // Fill the margins to center the matrix with the real content
+    widths[0] = Constraint::Fill(1);
+    widths[WIDTH - 1] = Constraint::Fill(1);
+    widths
 }

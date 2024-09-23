@@ -1,7 +1,11 @@
 #[path = "facade/layout.rs"]
 mod layout;
 
-use std::{io::{self, stdout}, thread::sleep, time::Duration};
+use std::{
+    io::{self, stdout},
+    thread::sleep,
+    time::Duration,
+};
 
 use ratatui::{
     backend::CrosstermBackend,
