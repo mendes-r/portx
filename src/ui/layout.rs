@@ -1,5 +1,5 @@
-#[path = "../service/ports.rs"]
-mod ports;
+#[path = "./matrix/populator.rs"]
+mod matrix_populator;
 mod table;
 
 use std::rc::Rc;
@@ -10,6 +10,12 @@ use ratatui::{
     Frame,
 };
 
+// Well-Known Ports (0–1023): Reserved for commonly used services and protocols
+//
+// Registered Ports (1024–49151): Assigned by IANA for specific services
+//
+// Dynamic/Private Ports (49152–65535)
+
 const WIDTH: usize = 100 + 2; // Columns + 2 for the margins
 
 pub fn tui(frame: &mut Frame) {
@@ -19,7 +25,7 @@ pub fn tui(frame: &mut Frame) {
     let matrix_wp = main_wp[1];
 
     let mut table_state = TableState::default();
-    let rows: [Row<'_>; WIDTH] = ports::ports_matrix();
+    let rows: [Row<'_>; WIDTH] = matrix_populator::ports_matrix();
     let table = table::generate_table(rows);
 
     frame.render_widget(
