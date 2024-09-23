@@ -10,7 +10,7 @@ use ratatui::{
     Frame,
 };
 
-const WIDTH: usize = 256 + 2; // Columns + 2 for the margins
+const WIDTH: usize = 100 + 2; // Columns + 2 for the margins
 
 pub fn tui(frame: &mut Frame) {
     let wrapper = tui_wrapper(frame);
