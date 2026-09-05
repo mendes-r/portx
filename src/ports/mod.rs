@@ -8,11 +8,15 @@ mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub struct PortStatus {
     pub tcp_listen: bool,
     pub tcp_established: bool,
     pub udp_active: bool,
+    // Process backing whichever state above is set, formatted as "name (pid)".
+    // Best-effort: left `None` when the owning process can't be resolved
+    // (e.g. it belongs to another user and we lack permission to inspect it).
+    pub process: Option<String>,
 }
 
 pub type PortTable = Vec<PortStatus>;

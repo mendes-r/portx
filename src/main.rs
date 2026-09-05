@@ -36,7 +36,7 @@ fn main() -> io::Result<()> {
     let mut should_quit = false;
     while !should_quit {
         terminal.draw(|frame| layout::tui(frame, &port_table, &mut cursor))?;
-        should_quit = handle_events(&mut cursor)?;
+        should_quit = handle_events(&mut cursor, &port_table)?;
 
         if last_scan.elapsed() >= SCAN_INTERVAL {
             port_table = ports::scan();
@@ -49,14 +49,14 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn handle_events(cursor: &mut Cursor) -> io::Result<bool> {
+fn handle_events(cursor: &mut Cursor, port_table: &ports::PortTable) -> io::Result<bool> {
     if event::poll(Duration::from_millis(50))? {
         if let Event::Key(key) = event::read()? {
             if key.kind == event::KeyEventKind::Press {
                 match key.code {
                     KeyCode::Char('q') => return Ok(true),
                     KeyCode::Up => cursor.up(),
-                    KeyCode::Down => cursor.down(),
+                    KeyCode::Down => cursor.down(port_table),
                     KeyCode::Left => cursor.left(),
                     KeyCode::Right => cursor.right(),
                     _ => {}

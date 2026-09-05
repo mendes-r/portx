@@ -22,6 +22,8 @@ pub fn scan(table: &mut [PortStatus]) {
             continue;
         }
 
+        let command = fields[0];
+        let pid = fields[1];
         let proto = fields[7];
         let name = fields[8..].join(" ");
         let Some(port) = local_port(&name) else {
@@ -38,8 +40,9 @@ pub fn scan(table: &mut [PortStatus]) {
                 }
             }
             "UDP" => table[port as usize].udp_active = true,
-            _ => {}
+            _ => continue,
         }
+        table[port as usize].process = Some(format!("{command} ({pid})"));
     }
 }
 

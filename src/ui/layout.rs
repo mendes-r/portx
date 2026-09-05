@@ -29,8 +29,10 @@ const MIN_WIDTH: u16 = matrix_populator::GRID_COLS as u16 + 2;
 // selection box, and the legend line.
 const MIN_HEIGHT: u16 = 2 + 1 + 3 + 1;
 
-// Selected cell in the matrix, addressed by logical (row, col) into the
-// 128x512 port grid (row = port / 128, col = port % 128).
+// Selected cell in the matrix. `col` is a column into the 128-wide grid,
+// but `row` addresses the *displayed* rows rather than raw grid rows: runs
+// of all-closed rows collapse into a single displayed row, so the row count
+// shrinks and grows with port state instead of being the fixed GRID_ROWS.
 #[derive(Default, Clone, Copy)]
 pub struct Cursor {
     pub row: usize,
@@ -42,8 +44,9 @@ impl Cursor {
         self.row = self.row.saturating_sub(1);
     }
 
-    pub fn down(&mut self) {
-        self.row = (self.row + 1).min(matrix_populator::GRID_ROWS - 1);
+    pub fn down(&mut self, ports: &PortTable) {
+        let max_row = matrix_populator::display_row_count(ports).saturating_sub(1);
+        self.row = (self.row + 1).min(max_row);
     }
 
     pub fn left(&mut self) {
@@ -67,14 +70,29 @@ pub fn tui(frame: &mut Frame, ports: &PortTable, cursor: &mut Cursor) {
     let selection_wp = wrapper[1];
     let legend_wp = wrapper[2];
 
+    // Collapsing all-closed rows shrinks the row count as port state
+    // changes; re-clamp here so a stale cursor from a larger grid self-heals
+    // rather than pointing past the end of the (now shorter) display list.
+    let total_rows = matrix_populator::display_row_count(ports);
+    cursor.row = cursor.row.min(total_rows.saturating_sub(1));
+
     // Leave room for the table's own border on each side.
-    let visible_rows =
-        (matrix_wp.height.saturating_sub(2) as usize).clamp(1, matrix_populator::GRID_ROWS);
-    let row_offset = scroll_offset(cursor.row, visible_rows);
+    let visible_rows = (matrix_wp.height.saturating_sub(2) as usize).clamp(1, total_rows.max(1));
+
+    // The first PINNED_ROWS display rows are always shown, unscrolled;
+    // only the remainder (the "body") scrolls to keep the cursor in view,
+    // within whatever height is left after the pinned rows.
+    let pinned = matrix_populator::PINNED_ROWS
+        .min(visible_rows)
+        .min(total_rows);
+    let body_capacity = visible_rows - pinned;
+    let body_total = total_rows - pinned;
+    let body_cursor = cursor.row.saturating_sub(pinned);
+    let body_offset = scroll_offset(body_cursor, body_capacity, body_total);
 
     let mut table_state = TableState::default();
     let rows: Vec<Row<'_>> =
-        matrix_populator::ports_matrix(ports, *cursor, row_offset, visible_rows);
+        matrix_populator::ports_matrix(ports, *cursor, body_offset, visible_rows);
     let table = table::generate_table(rows, MIN_WIDTH as usize);
 
     frame.render_stateful_widget(table, matrix_wp, &mut table_state);
@@ -84,26 +102,45 @@ pub fn tui(frame: &mut Frame, ports: &PortTable, cursor: &mut Cursor) {
 
 // Keeps the cursor roughly centered in the viewport, clamped so the view
 // never scrolls past the top or bottom of the grid.
-fn scroll_offset(cursor_row: usize, visible_rows: usize) -> usize {
-    if visible_rows >= matrix_populator::GRID_ROWS {
+fn scroll_offset(cursor_row: usize, visible_rows: usize, total_rows: usize) -> usize {
+    if visible_rows >= total_rows {
         return 0;
     }
     let half = visible_rows / 2;
     cursor_row
         .saturating_sub(half)
-        .min(matrix_populator::GRID_ROWS - visible_rows)
+        .min(total_rows - visible_rows)
 }
 
 fn selection(ports: &PortTable, cursor: Cursor) -> Paragraph<'static> {
     let info = matrix_populator::selected_cell_info(ports, cursor);
 
-    let line = Line::from(vec![
-        Span::raw(format!("port {}", info.port)),
+    // Only closed ports and collapsed rows are guaranteed to have no owning
+    // process; every other state gets a process span, falling back to an
+    // explicit "unknown" when the scanner couldn't resolve one.
+    let active = matches!(info.label.as_str(), "established" | "listening" | "udp");
+
+    let mut spans = vec![
+        Span::raw(info.header),
         Span::raw("   "),
         Span::styled(info.label, Style::default().fg(info.color)),
-    ]);
+    ];
+    match info.process {
+        Some(process) => {
+            spans.push(Span::raw("   "));
+            spans.push(Span::raw(process));
+        }
+        None if active => {
+            spans.push(Span::raw("   "));
+            spans.push(Span::styled(
+                "unknown process",
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
+        None => {}
+    }
 
-    Paragraph::new(line).block(Block::new().borders(Borders::ALL))
+    Paragraph::new(Line::from(spans)).block(Block::new().borders(Borders::ALL))
 }
 
 fn legend() -> Paragraph<'static> {

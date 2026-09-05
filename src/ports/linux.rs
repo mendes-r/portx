@@ -1,15 +1,17 @@
+use std::collections::HashMap;
 use std::fs;
 
 use super::PortStatus;
 
 pub fn scan(table: &mut [PortStatus]) {
-    scan_tcp("/proc/net/tcp", table);
-    scan_tcp("/proc/net/tcp6", table);
-    scan_udp("/proc/net/udp", table);
-    scan_udp("/proc/net/udp6", table);
+    let inodes = build_inode_map();
+    scan_tcp("/proc/net/tcp", table, &inodes);
+    scan_tcp("/proc/net/tcp6", table, &inodes);
+    scan_udp("/proc/net/udp", table, &inodes);
+    scan_udp("/proc/net/udp6", table, &inodes);
 }
 
-fn scan_tcp(path: &str, table: &mut [PortStatus]) {
+fn scan_tcp(path: &str, table: &mut [PortStatus], inodes: &HashMap<u64, String>) {
     let Ok(contents) = fs::read_to_string(path) else {
         return;
     };
@@ -22,12 +24,13 @@ fn scan_tcp(path: &str, table: &mut [PortStatus]) {
         match fields.get(3) {
             Some(&"0A") => table[port as usize].tcp_listen = true,
             Some(&"01") => table[port as usize].tcp_established = true,
-            _ => {}
+            _ => continue,
         }
+        set_process(&mut table[port as usize], &fields, inodes);
     }
 }
 
-fn scan_udp(path: &str, table: &mut [PortStatus]) {
+fn scan_udp(path: &str, table: &mut [PortStatus], inodes: &HashMap<u64, String>) {
     let Ok(contents) = fs::read_to_string(path) else {
         return;
     };
@@ -36,6 +39,15 @@ fn scan_udp(path: &str, table: &mut [PortStatus]) {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if let Some(port) = local_port(&fields) {
             table[port as usize].udp_active = true;
+            set_process(&mut table[port as usize], &fields, inodes);
+        }
+    }
+}
+
+fn set_process(status: &mut PortStatus, fields: &[&str], inodes: &HashMap<u64, String>) {
+    if let Some(inode) = socket_inode(fields) {
+        if let Some(process) = inodes.get(&inode) {
+            status.process = Some(process.clone());
         }
     }
 }
@@ -45,4 +57,57 @@ fn local_port(fields: &[&str]) -> Option<u16> {
     let addr = fields.get(1)?;
     let port_hex = addr.split(':').nth(1)?;
     u16::from_str_radix(port_hex, 16).ok()
+}
+
+// Field 9 (0-indexed) of a `/proc/net/{tcp,udp}` row is the socket's inode,
+// which cross-references `/proc/[pid]/fd/*` symlinks (see `build_inode_map`)
+// to find the owning process.
+fn socket_inode(fields: &[&str]) -> Option<u64> {
+    fields.get(9)?.parse().ok()
+}
+
+// Maps a socket's inode to its owning process, formatted as "name (pid)".
+// Built by walking every process's open file descriptors looking for
+// `socket:[inode]` symlinks — the same technique tools like `ss -tunlp` and
+// `lsof` use under the hood. Best-effort: processes owned by other users are
+// silently skipped rather than erroring, since reading their `fd` directory
+// requires privileges we may not have.
+fn build_inode_map() -> HashMap<u64, String> {
+    let mut map = HashMap::new();
+    let Ok(proc_dir) = fs::read_dir("/proc") else {
+        return map;
+    };
+
+    for entry in proc_dir.flatten() {
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
+            continue;
+        };
+        let Ok(fds) = fs::read_dir(entry.path().join("fd")) else {
+            continue;
+        };
+
+        for fd in fds.flatten() {
+            let Ok(link) = fs::read_link(fd.path()) else {
+                continue;
+            };
+            let Some(inode) = link
+                .to_str()
+                .and_then(|s| s.strip_prefix("socket:["))
+                .and_then(|s| s.strip_suffix(']'))
+                .and_then(|s| s.parse().ok())
+            else {
+                continue;
+            };
+            map.entry(inode).or_insert_with(|| process_name(pid));
+        }
+    }
+
+    map
+}
+
+fn process_name(pid: u32) -> String {
+    let name = fs::read_to_string(format!("/proc/{pid}/comm"))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| "?".to_string());
+    format!("{name} ({pid})")
 }

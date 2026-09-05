@@ -16,7 +16,7 @@ pub const HIGHLIGHTED_PORT: Color = Color::Red;
 
 // Mirrors `status_color`'s priority (established > listening > udp > closed)
 // so the selection box always names the same state the cell is colored for.
-pub fn status_label(status: PortStatus) -> &'static str {
+pub fn status_label(status: &PortStatus) -> &'static str {
     if status.tcp_established {
         "established"
     } else if status.tcp_listen {
@@ -28,7 +28,7 @@ pub fn status_label(status: PortStatus) -> &'static str {
     }
 }
 
-pub fn status_color(status: PortStatus) -> Color {
+pub fn status_color(status: &PortStatus) -> Color {
     if status.tcp_established {
         ESTABLISHED
     } else if status.tcp_listen {
