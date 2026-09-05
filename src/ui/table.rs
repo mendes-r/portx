@@ -5,8 +5,12 @@ use ratatui::{
     widgets::{Block, Borders, Row, Table},
 };
 
-pub fn generate_table(rows: Vec<Row<'static>>, width: usize) -> Table<'static> {
-    let widths = widths_constraints(width);
+pub fn generate_table(
+    rows: Vec<Row<'static>>,
+    column_count: usize,
+    label_width: u16,
+) -> Table<'static> {
+    let widths = widths_constraints(column_count, label_width);
 
     Table::new(rows, widths)
         .block(Block::new().title("matrix"))
@@ -16,12 +20,12 @@ pub fn generate_table(rows: Vec<Row<'static>>, width: usize) -> Table<'static> {
         .block(Block::new().borders(Borders::ALL))
 }
 
-fn widths_constraints(width: usize) -> Vec<Constraint> {
-    let mut widths = vec![Constraint::Length(1); width];
-    // Fill the margins to center the matrix with the real content
+fn widths_constraints(column_count: usize, label_width: u16) -> Vec<Constraint> {
+    let mut widths = vec![Constraint::Length(1); column_count];
     if let Some(first) = widths.first_mut() {
-        *first = Constraint::Fill(1);
+        *first = Constraint::Length(label_width);
     }
+    // Fill the right margin to keep the grid off the table's border.
     if let Some(last) = widths.last_mut() {
         *last = Constraint::Fill(1);
     }

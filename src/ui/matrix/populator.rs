@@ -2,7 +2,9 @@
 mod color;
 
 use ratatui::{
+    layout::Alignment,
     style::{Color, Modifier, Style},
+    text::Line,
     widgets::{Cell, Row},
 };
 
@@ -17,14 +19,23 @@ use crate::ports::PortTable;
 pub const GRID_COLS: usize = 128;
 pub const GRID_ROWS: usize = 512;
 
-// SSH, called out in red regardless of its actual status.
-const HIGHLIGHTED_PORT: usize = 22;
-
 // Right-edge sliver for the vertical grid line, paired with a real
 // underline (a separate render attribute, not a glyph) for the horizontal
 // one — together they outline the cell's own bottom-right border instead of
 // cutting across its center like a full-width/height glyph would.
 const GRID_GLYPH: &str = "▕";
+
+// Marks the cell under the cursor. A full block, rather than reversing
+// GRID_GLYPH's fg/bg (the previous approach), since GRID_GLYPH only inks a
+// thin vertical sliver — reversed, that mostly read as a plain black
+// square. The cell's actual status color is already named in the selection
+// box below, so trading it for an unmissable cursor here is a fair swap.
+const CURSOR_GLYPH: &str = "█";
+
+// Width of the row's port-range label column — exactly wide enough for the
+// widest label, "65408-65535" (11 characters); right-aligned, so shorter
+// labels pad out on the left instead of needing a spacer column.
+pub const LABEL_WIDTH: usize = 11;
 
 // Rows covering the well-known ports (0-1023, i.e. rows 0-7 at 128 columns
 // per row) always render individually (never collapsing into a black bar)
@@ -32,20 +43,15 @@ const GRID_GLYPH: &str = "▕";
 // all times regardless of what's active on it or where the cursor scrolls.
 pub const PINNED_ROWS: usize = 1024 / GRID_COLS;
 
-// True when every port in `row` is closed. The row containing the
-// highlighted port is never considered closed, even if that port itself is
-// inactive — it always renders in red, so it can't be hidden along with the
-// genuinely empty rows around it. Same for rows within `PINNED_ROWS`.
+// True when every port in `row` is closed. Rows within `PINNED_ROWS` are
+// never considered closed, regardless of their actual state.
 fn row_is_closed(row: usize, ports: &PortTable) -> bool {
     if row < PINNED_ROWS {
         return false;
     }
     let base = row * GRID_COLS;
     (base..base + GRID_COLS).all(|port| {
-        port != HIGHLIGHTED_PORT
-            && !ports[port].tcp_listen
-            && !ports[port].tcp_established
-            && !ports[port].udp_active
+        !ports[port].tcp_listen && !ports[port].tcp_established && !ports[port].udp_active
     })
 }
 
@@ -86,18 +92,10 @@ pub fn selected_cell_info(ports: &PortTable, cursor: Cursor) -> CellInfo {
     let row = display_rows[idx];
 
     let port = row * GRID_COLS + cursor.col;
-    let (label, color) = if port == HIGHLIGHTED_PORT {
-        ("ssh (highlighted)".to_string(), color::HIGHLIGHTED_PORT)
-    } else {
-        (
-            color::status_label(&ports[port]).to_string(),
-            color::status_color(&ports[port]),
-        )
-    };
     CellInfo {
         header: format!("port {port}"),
-        label,
-        color,
+        label: color::status_label(&ports[port]).to_string(),
+        color: color::status_color(&ports[port], port < 1024),
         process: ports[port].process.clone(),
     }
 }
@@ -135,29 +133,25 @@ pub fn ports_matrix(
 fn fill_row(row: usize, ports: &PortTable, cursor: Cursor, display_idx: usize) -> Row<'static> {
     let mut cells: Vec<Cell> = Vec::with_capacity(GRID_COLS + 2);
 
-    for col in 0..GRID_COLS + 2 {
-        if col == 0 || col == GRID_COLS + 1 {
-            // Margins for centering real matrix content
-            cells.push(Cell::new(""));
-            continue;
-        }
+    let range_start = row * GRID_COLS;
+    let range_end = range_start + GRID_COLS - 1;
+    let label = Line::from(format!("{range_start}-{range_end}")).alignment(Alignment::Right);
+    cells.push(Cell::from(label).style(Style::default().fg(Color::DarkGray)));
 
-        let content_col = col - 1;
+    for content_col in 0..GRID_COLS {
         let port = row * GRID_COLS + content_col;
-        let bg = if port == HIGHLIGHTED_PORT {
-            color::HIGHLIGHTED_PORT
-        } else {
-            color::status_color(&ports[port])
-        };
 
-        let mut style = grid_cell_style(bg);
-        if display_idx == cursor.row && content_col == cursor.col {
-            // Reverse video: a basic, universally-supported attribute (unlike
-            // underline_color) so the selected cell is always visible.
-            style = style.add_modifier(Modifier::REVERSED);
-        }
-        cells.push(Cell::from(GRID_GLYPH).style(style));
+        let cell = if display_idx == cursor.row && content_col == cursor.col {
+            Cell::from(CURSOR_GLYPH).style(Style::default().fg(color::CURSOR))
+        } else {
+            let bg = color::status_color(&ports[port], port < 1024);
+            Cell::from(GRID_GLYPH).style(grid_cell_style(bg))
+        };
+        cells.push(cell);
     }
+
+    // Right margin, to keep the grid off the table's border.
+    cells.push(Cell::new(""));
 
     Row::new(cells)
 }

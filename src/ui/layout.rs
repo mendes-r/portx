@@ -20,10 +20,12 @@ use crate::ports::PortTable;
 //
 // Dynamic/Private Ports (49152–65535)
 
-// Terminal columns needed for the grid (128 real ports plus the table's own
-// border on each side). Unlike width, height isn't required up front — the
-// grid scrolls, so any number of rows renders a partial view of it.
-const MIN_WIDTH: u16 = matrix_populator::GRID_COLS as u16 + 2;
+// Terminal columns needed for the grid: the port-range label column, the
+// 128 real ports, and a 1-column margin on the right. Unlike width, height
+// isn't required up front — the grid scrolls, so any number of rows renders
+// a partial view of it.
+const MIN_WIDTH: u16 =
+    matrix_populator::LABEL_WIDTH as u16 + matrix_populator::GRID_COLS as u16 + 1;
 
 // Smallest usable height: the grid's own border plus one content row, the
 // selection box, and the legend line.
@@ -93,7 +95,8 @@ pub fn tui(frame: &mut Frame, ports: &PortTable, cursor: &mut Cursor) {
     let mut table_state = TableState::default();
     let rows: Vec<Row<'_>> =
         matrix_populator::ports_matrix(ports, *cursor, body_offset, visible_rows);
-    let table = table::generate_table(rows, MIN_WIDTH as usize);
+    let column_count = matrix_populator::GRID_COLS + 2;
+    let table = table::generate_table(rows, column_count, matrix_populator::LABEL_WIDTH as u16);
 
     frame.render_stateful_widget(table, matrix_wp, &mut table_state);
     frame.render_widget(selection(ports, *cursor), selection_wp);
