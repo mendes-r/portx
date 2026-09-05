@@ -5,21 +5,25 @@ use ratatui::{
     widgets::{Block, Borders, Row, Table},
 };
 
-pub fn generate_table<const WIDTH: usize>(rows: [Row<'static>; WIDTH]) -> Table<'_> {
-    let widths: [Constraint; WIDTH] = widths_constraints();
+pub fn generate_table(rows: Vec<Row<'static>>, width: usize) -> Table<'static> {
+    let widths = widths_constraints(width);
 
     Table::new(rows, widths)
         .block(Block::new().title("matrix"))
         .column_spacing(0)
-        .highlight_style(Style::new().add_modifier(Modifier::REVERSED))
+        .row_highlight_style(Style::new().add_modifier(Modifier::REVERSED))
         .highlight_symbol(">>")
         .block(Block::new().borders(Borders::ALL))
 }
 
-fn widths_constraints<const WIDTH: usize>() -> [Constraint; WIDTH] {
-    let mut widths = [Constraint::Length(1); WIDTH];
+fn widths_constraints(width: usize) -> Vec<Constraint> {
+    let mut widths = vec![Constraint::Length(1); width];
     // Fill the margins to center the matrix with the real content
-    widths[0] = Constraint::Fill(1);
-    widths[WIDTH - 1] = Constraint::Fill(1);
+    if let Some(first) = widths.first_mut() {
+        *first = Constraint::Fill(1);
+    }
+    if let Some(last) = widths.last_mut() {
+        *last = Constraint::Fill(1);
+    }
     widths
 }

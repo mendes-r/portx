@@ -1,6 +1,6 @@
 # TODO
 
-- [ ] draw the grid
-- [ ] adapt the grid to the terminal size
+- [x] draw the grid
+- [x] adapt the grid to the terminal size
 
-- [ ] get information from the system
+- [x] get information from the system

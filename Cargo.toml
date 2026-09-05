@@ -6,6 +6,5 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ratatui = "0.28.1"
-rand = "0.8.4"
+ratatui = "0.30.2"
 

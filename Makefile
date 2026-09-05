@@ -11,3 +11,6 @@ build:
 	cargo fmt
 	cargo build $(release)
 
+start: build
+	./target/$(target)/$(prog)
+
