@@ -8,6 +8,29 @@ Without the use of any alphanumeric characters, the user should get enough usefu
 
 The most probable visual technique would be a heatmap.
 
+## Installation
+
+Requires [Rust](https://rustup.rs) (for `cargo`).
+
+```bash
+$ ./install.sh
+```
+
+This builds a release binary and installs it to `/usr/local/bin/portx` (uses `sudo` only if that directory isn't writable). Set `INSTALL_DIR` to install elsewhere:
+
+```bash
+$ INSTALL_DIR=~/.local/bin ./install.sh
+```
+
+Supports macOS and Linux.
+
+## Usage
+
+```bash
+$ portx
+```
+
+Runs the TUI. Press `q` to quit.
 
 ## Testing 
 

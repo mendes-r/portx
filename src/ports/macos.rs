@@ -43,6 +43,7 @@ pub fn scan(table: &mut [PortStatus]) {
             _ => continue,
         }
         table[port as usize].process = Some(format!("{command} ({pid})"));
+        table[port as usize].pid = pid.parse().ok();
     }
 }
 

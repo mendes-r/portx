@@ -86,12 +86,16 @@ pub struct CellInfo {
     pub process: Option<String>,
 }
 
-pub fn selected_cell_info(ports: &PortTable, cursor: Cursor) -> CellInfo {
+// Raw port number under the cursor, reversing the same display-row mapping
+// `ports_matrix` renders with.
+pub fn selected_port(ports: &PortTable, cursor: Cursor) -> usize {
     let display_rows = build_display_rows(ports);
     let idx = cursor.row.min(display_rows.len().saturating_sub(1));
-    let row = display_rows[idx];
+    display_rows[idx] * GRID_COLS + cursor.col
+}
 
-    let port = row * GRID_COLS + cursor.col;
+pub fn selected_cell_info(ports: &PortTable, cursor: Cursor) -> CellInfo {
+    let port = selected_port(ports, cursor);
     CellInfo {
         header: format!("port {port}"),
         label: color::status_label(&ports[port]).to_string(),

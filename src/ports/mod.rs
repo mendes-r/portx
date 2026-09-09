@@ -17,6 +17,9 @@ pub struct PortStatus {
     // Best-effort: left `None` when the owning process can't be resolved
     // (e.g. it belongs to another user and we lack permission to inspect it).
     pub process: Option<String>,
+    // Same process, as a raw pid, so it can be signaled (see `terminate`/
+    // `force_kill`) without re-parsing the display string above.
+    pub pid: Option<u32>,
 }
 
 pub type PortTable = Vec<PortStatus>;
@@ -30,4 +33,29 @@ pub fn scan() -> PortTable {
     macos::scan(&mut table);
 
     table
+}
+
+// Sends SIGTERM, giving the process a chance to shut its ports down
+// cleanly. There's no way to close a single socket independently of the
+// process that owns it (Linux's `ss -K` can do that for a single TCP
+// socket, but it's Linux/TCP-only) — the process is the closest thing to a
+// unit of "close this port" that exists on every platform this runs on.
+pub fn terminate(pid: u32) -> std::io::Result<()> {
+    send_signal(pid, libc::SIGTERM)
+}
+
+// Un-ignorable fallback for a process that didn't exit after `terminate`.
+pub fn force_kill(pid: u32) -> std::io::Result<()> {
+    send_signal(pid, libc::SIGKILL)
+}
+
+fn send_signal(pid: u32, signal: i32) -> std::io::Result<()> {
+    // Safety: `kill(2)` only reads its arguments; passing a stale/unowned
+    // pid just fails with ESRCH/EPERM rather than causing UB.
+    let result = unsafe { libc::kill(pid as i32, signal) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
 }

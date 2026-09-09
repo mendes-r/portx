@@ -11,7 +11,7 @@ pub fn scan(table: &mut [PortStatus]) {
     scan_udp("/proc/net/udp6", table, &inodes);
 }
 
-fn scan_tcp(path: &str, table: &mut [PortStatus], inodes: &HashMap<u64, String>) {
+fn scan_tcp(path: &str, table: &mut [PortStatus], inodes: &HashMap<u64, (String, u32)>) {
     let Ok(contents) = fs::read_to_string(path) else {
         return;
     };
@@ -30,7 +30,7 @@ fn scan_tcp(path: &str, table: &mut [PortStatus], inodes: &HashMap<u64, String>)
     }
 }
 
-fn scan_udp(path: &str, table: &mut [PortStatus], inodes: &HashMap<u64, String>) {
+fn scan_udp(path: &str, table: &mut [PortStatus], inodes: &HashMap<u64, (String, u32)>) {
     let Ok(contents) = fs::read_to_string(path) else {
         return;
     };
@@ -44,10 +44,11 @@ fn scan_udp(path: &str, table: &mut [PortStatus], inodes: &HashMap<u64, String>)
     }
 }
 
-fn set_process(status: &mut PortStatus, fields: &[&str], inodes: &HashMap<u64, String>) {
+fn set_process(status: &mut PortStatus, fields: &[&str], inodes: &HashMap<u64, (String, u32)>) {
     if let Some(inode) = socket_inode(fields) {
-        if let Some(process) = inodes.get(&inode) {
+        if let Some((process, pid)) = inodes.get(&inode) {
             status.process = Some(process.clone());
+            status.pid = Some(*pid);
         }
     }
 }
@@ -72,7 +73,7 @@ fn socket_inode(fields: &[&str]) -> Option<u64> {
 // `lsof` use under the hood. Best-effort: processes owned by other users are
 // silently skipped rather than erroring, since reading their `fd` directory
 // requires privileges we may not have.
-fn build_inode_map() -> HashMap<u64, String> {
+fn build_inode_map() -> HashMap<u64, (String, u32)> {
     let mut map = HashMap::new();
     let Ok(proc_dir) = fs::read_dir("/proc") else {
         return map;
@@ -98,7 +99,7 @@ fn build_inode_map() -> HashMap<u64, String> {
             else {
                 continue;
             };
-            map.entry(inode).or_insert_with(|| process_name(pid));
+            map.entry(inode).or_insert_with(|| (process_name(pid), pid));
         }
     }
 

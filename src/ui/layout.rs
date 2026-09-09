@@ -8,10 +8,11 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Row, TableState},
+    widgets::{Block, Borders, Clear, Paragraph, Row, TableState},
     Frame,
 };
 
+use crate::kill::KillPrompt;
 use crate::ports::PortTable;
 
 // Well-Known Ports (0–1023): Reserved for commonly used services and protocols
@@ -60,7 +61,15 @@ impl Cursor {
     }
 }
 
-pub fn tui(frame: &mut Frame, ports: &PortTable, cursor: &mut Cursor) {
+// Port, pid, and process name under the cursor, for the kill-prompt flow to
+// act on. Pid is `None` when the port is closed or its owner couldn't be
+// resolved — callers use that to decide whether there's anything to kill.
+pub fn selected_port_info(ports: &PortTable, cursor: Cursor) -> (u16, Option<u32>, Option<String>) {
+    let port = matrix_populator::selected_port(ports, cursor);
+    (port as u16, ports[port].pid, ports[port].process.clone())
+}
+
+pub fn tui(frame: &mut Frame, ports: &PortTable, cursor: &mut Cursor, kill_prompt: &KillPrompt) {
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         frame.render_widget(too_small(area), area);
@@ -101,6 +110,7 @@ pub fn tui(frame: &mut Frame, ports: &PortTable, cursor: &mut Cursor) {
     frame.render_stateful_widget(table, matrix_wp, &mut table_state);
     frame.render_widget(selection(ports, *cursor), selection_wp);
     frame.render_widget(legend(), legend_wp);
+    kill_popup(frame, kill_prompt);
 }
 
 // Keeps the cursor roughly centered in the viewport, clamped so the view
@@ -155,9 +165,52 @@ fn legend() -> Paragraph<'static> {
         Span::styled("udp", Style::default().fg(Color::Blue)),
         Span::raw("   "),
         Span::styled("closed", Style::default().fg(Color::Rgb(40, 40, 40))),
-        Span::raw("      arrows to move      q to quit"),
+        Span::raw("      arrows to move      k to kill      q to quit"),
     ]);
     Paragraph::new(line)
+}
+
+// Centered modal for the kill-confirmation flow; renders nothing while
+// `kill_prompt` is `KillPrompt::None`.
+fn kill_popup(frame: &mut Frame, kill_prompt: &KillPrompt) {
+    let text = match kill_prompt {
+        KillPrompt::None => return,
+        KillPrompt::ConfirmTerm(target) => format!(
+            "send SIGTERM to {} (pid {})?   y/n",
+            target.process, target.pid
+        ),
+        KillPrompt::WaitingForExit { target, .. } => {
+            format!(
+                "waiting for {} (pid {}) to exit...",
+                target.process, target.pid
+            )
+        }
+        KillPrompt::ConfirmKill(target) => format!(
+            "{} (pid {}) is still running. send SIGKILL?   y/n",
+            target.process, target.pid
+        ),
+        KillPrompt::Message(text) => format!("{text}   (press any key)"),
+    };
+
+    let area = centered_rect(frame.area(), text.len() as u16 + 4, 3);
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(text)
+            .alignment(Alignment::Center)
+            .block(Block::new().borders(Borders::ALL).title("kill process")),
+        area,
+    );
+}
+
+fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    Rect::new(
+        area.x + (area.width - width) / 2,
+        area.y + (area.height - height) / 2,
+        width,
+        height,
+    )
 }
 
 fn too_small(area: Rect) -> Paragraph<'static> {
