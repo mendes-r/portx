@@ -1,5 +1,4 @@
-#[path = "./color.rs"]
-mod color;
+use std::time::{Duration, Instant};
 
 use ratatui::{
     layout::Alignment,
@@ -8,8 +7,34 @@ use ratatui::{
     widgets::{Cell, Row},
 };
 
+use super::color;
 use super::Cursor;
 use crate::ports::PortTable;
+
+// How long a changed cell's background blends from FLASH toward its normal
+// status color. 4x SCAN_INTERVAL (500ms) so a change spans several scan
+// cycles before fading out — long enough not to be missed, short enough
+// that "recent" keeps meaning in a grid that's always changing somewhere.
+const FLASH_DURATION: Duration = Duration::from_millis(2000);
+
+fn flash_weight(last_changed: Option<Instant>) -> f32 {
+    match last_changed {
+        Some(t) => (1.0 - t.elapsed().as_secs_f32() / FLASH_DURATION.as_secs_f32()).clamp(0.0, 1.0),
+        None => 0.0,
+    }
+}
+
+// Strongest flash weight of any port in `row` — drives the row label's own
+// fade, a coarser "something changed in this row" signal alongside the
+// precise per-cell flash, useful since a single changed cell can be easy to
+// spot-miss among 128 columns.
+fn row_flash_weight(row: usize, last_changed: &[Option<Instant>]) -> f32 {
+    let base = row * GRID_COLS;
+    last_changed[base..base + GRID_COLS]
+        .iter()
+        .map(|&t| flash_weight(t))
+        .fold(0.0, f32::max)
+}
 
 // The port space is a 128x512 grid (row = port / 128, col = port % 128,
 // 128 * 512 = 65536). 128 columns fits comfortably in an ordinary terminal
@@ -43,15 +68,22 @@ pub const LABEL_WIDTH: usize = 11;
 // all times regardless of what's active on it or where the cursor scrolls.
 pub const PINNED_ROWS: usize = 1024 / GRID_COLS;
 
-// True when every port in `row` is closed. Rows within `PINNED_ROWS` are
-// never considered closed, regardless of their actual state.
-fn row_is_closed(row: usize, ports: &PortTable) -> bool {
+// True when every port in `row` is closed and none is currently flashing.
+// Rows within `PINNED_ROWS` are never considered closed, regardless of
+// their actual state. A flashing port (e.g. one that just closed) keeps its
+// row visible for the full fade window even though its `PortStatus` alone
+// would call the row all-closed — otherwise a change could flash and vanish
+// in the same frame its row collapses out of the display list.
+fn row_is_closed(row: usize, ports: &PortTable, last_changed: &[Option<Instant>]) -> bool {
     if row < PINNED_ROWS {
         return false;
     }
     let base = row * GRID_COLS;
     (base..base + GRID_COLS).all(|port| {
-        !ports[port].tcp_listen && !ports[port].tcp_established && !ports[port].udp_active
+        !ports[port].tcp_listen
+            && !ports[port].tcp_established
+            && !ports[port].udp_active
+            && flash_weight(last_changed[port]) <= 0.0
     })
 }
 
@@ -61,47 +93,25 @@ fn row_is_closed(row: usize, ports: &PortTable) -> bool {
 // being rendered as rows of their own; `Cursor::row`/scrolling operate on
 // this list, so the number of display rows shrinks and grows as port state
 // changes.
-fn build_display_rows(ports: &PortTable) -> Vec<usize> {
+fn build_display_rows(ports: &PortTable, last_changed: &[Option<Instant>]) -> Vec<usize> {
     (0..GRID_ROWS)
-        .filter(|&row| !row_is_closed(row, ports))
+        .filter(|&row| !row_is_closed(row, ports, last_changed))
         .collect()
 }
 
 // Number of rows the grid renders as, after hiding closed runs — always <=
 // GRID_ROWS, and what `Cursor::row`/scrolling should treat as the row count
 // instead of the raw GRID_ROWS constant.
-pub fn display_row_count(ports: &PortTable) -> usize {
-    build_display_rows(ports).len()
-}
-
-// Everything the selection box needs to describe the cell under the
-// cursor: the header line (which port) and the same label/color the cell
-// itself is drawn with.
-pub struct CellInfo {
-    pub header: String,
-    pub label: String,
-    pub color: Color,
-    // Process backing the cell's state, e.g. "nginx (1234)"; absent for
-    // closed ports, or when it couldn't be resolved.
-    pub process: Option<String>,
+pub fn display_row_count(ports: &PortTable, last_changed: &[Option<Instant>]) -> usize {
+    build_display_rows(ports, last_changed).len()
 }
 
 // Raw port number under the cursor, reversing the same display-row mapping
 // `ports_matrix` renders with.
-pub fn selected_port(ports: &PortTable, cursor: Cursor) -> usize {
-    let display_rows = build_display_rows(ports);
+pub fn selected_port(ports: &PortTable, last_changed: &[Option<Instant>], cursor: Cursor) -> usize {
+    let display_rows = build_display_rows(ports, last_changed);
     let idx = cursor.row.min(display_rows.len().saturating_sub(1));
     display_rows[idx] * GRID_COLS + cursor.col
-}
-
-pub fn selected_cell_info(ports: &PortTable, cursor: Cursor) -> CellInfo {
-    let port = selected_port(ports, cursor);
-    CellInfo {
-        header: format!("port {port}"),
-        label: color::status_label(&ports[port]).to_string(),
-        color: color::status_color(&ports[port], port < 1024),
-        process: ports[port].process.clone(),
-    }
 }
 
 // Renders `visible_rows` display rows total, made of two parts: the pinned
@@ -115,32 +125,45 @@ pub fn ports_matrix(
     cursor: Cursor,
     body_offset: usize,
     visible_rows: usize,
+    last_changed: &[Option<Instant>],
 ) -> Vec<Row<'static>> {
-    let display_rows = build_display_rows(ports);
+    let display_rows = build_display_rows(ports, last_changed);
     let pinned = PINNED_ROWS.min(visible_rows).min(display_rows.len());
 
     let mut rows = Vec::with_capacity(visible_rows);
     for (display_idx, &row) in display_rows[..pinned].iter().enumerate() {
-        rows.push(fill_row(row, ports, cursor, display_idx));
+        rows.push(fill_row(row, ports, cursor, display_idx, last_changed));
     }
 
     let body_budget = visible_rows - pinned;
     let body_start = (pinned + body_offset).min(display_rows.len());
     let body_end = (body_start + body_budget).min(display_rows.len());
     for (i, &row) in display_rows[body_start..body_end].iter().enumerate() {
-        rows.push(fill_row(row, ports, cursor, body_start + i));
+        rows.push(fill_row(row, ports, cursor, body_start + i, last_changed));
     }
 
     rows
 }
 
-fn fill_row(row: usize, ports: &PortTable, cursor: Cursor, display_idx: usize) -> Row<'static> {
+fn fill_row(
+    row: usize,
+    ports: &PortTable,
+    cursor: Cursor,
+    display_idx: usize,
+    last_changed: &[Option<Instant>],
+) -> Row<'static> {
     let mut cells: Vec<Cell> = Vec::with_capacity(GRID_COLS + 2);
 
     let range_start = row * GRID_COLS;
     let range_end = range_start + GRID_COLS - 1;
     let label = Line::from(format!("{range_start}-{range_end}")).alignment(Alignment::Right);
-    cells.push(Cell::from(label).style(Style::default().fg(Color::DarkGray)));
+    let label_weight = row_flash_weight(row, last_changed);
+    let label_fg = if label_weight > 0.0 {
+        color::lerp_color(color::LABEL, color::FLASH, label_weight)
+    } else {
+        color::LABEL
+    };
+    cells.push(Cell::from(label).style(Style::default().fg(label_fg)));
 
     for content_col in 0..GRID_COLS {
         let port = row * GRID_COLS + content_col;
@@ -148,8 +171,17 @@ fn fill_row(row: usize, ports: &PortTable, cursor: Cursor, display_idx: usize) -
         let cell = if display_idx == cursor.row && content_col == cursor.col {
             Cell::from(CURSOR_GLYPH).style(Style::default().fg(color::CURSOR))
         } else {
-            let bg = color::status_color(&ports[port], port < 1024);
-            Cell::from(GRID_GLYPH).style(grid_cell_style(bg))
+            let status = &ports[port];
+            let base_bg = color::status_color(status, port < 1024);
+            let weight = flash_weight(last_changed[port]);
+            let bg = if weight > 0.0 {
+                color::lerp_color(base_bg, color::FLASH, weight)
+            } else {
+                base_bg
+            };
+            let border = color::process_border_color(status.process.as_deref());
+            let bind_global = status.bind_global && (status.tcp_listen || status.udp_active);
+            Cell::from(GRID_GLYPH).style(grid_cell_style(bg, border, bind_global))
         };
         cells.push(cell);
     }
@@ -160,14 +192,23 @@ fn fill_row(row: usize, ports: &PortTable, cursor: Cursor, display_idx: usize) -
     Row::new(cells)
 }
 
-// Right-edge glyph + bottom underline, both reading as the grid line color,
-// over the cell's own status background. Underline color is left to the
-// terminal default (which follows `fg`) rather than set explicitly — the
-// explicit-underline-color SGR is a newer extension that some terminals
-// (e.g. Terminal.app) mishandle, which was dropping the line entirely.
-fn grid_cell_style(bg: Color) -> Style {
-    Style::default()
+// Right-edge glyph + bottom underline, over the cell's own status
+// background (blended toward FLASH while recently changed). `border` names
+// the owning process via a stable hue (or falls back to plain black for
+// closed/unresolved cells); `bind_global` renders that border bold, as an
+// independent visual weight layered on top, so bind-scope reads as its own
+// signal rather than competing for the same color channel. Underline color
+// is left to the terminal default (which follows `fg`) rather than set
+// explicitly — the explicit-underline-color SGR is a newer extension that
+// some terminals (e.g. Terminal.app) mishandle, which was dropping the line
+// entirely.
+fn grid_cell_style(bg: Color, border: Color, bind_global: bool) -> Style {
+    let mut style = Style::default()
         .bg(bg)
-        .fg(color::GRID_LINE)
-        .add_modifier(Modifier::UNDERLINED)
+        .fg(border)
+        .add_modifier(Modifier::UNDERLINED);
+    if bind_global {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    style
 }

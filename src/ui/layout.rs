@@ -1,8 +1,13 @@
+#[path = "./matrix/color.rs"]
+mod color;
 #[path = "./matrix/populator.rs"]
 mod matrix_populator;
+#[path = "./panel.rs"]
+mod panel;
 mod table;
 
 use std::rc::Rc;
+use std::time::Instant;
 
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -28,9 +33,16 @@ use crate::ports::PortTable;
 const MIN_WIDTH: u16 =
     matrix_populator::LABEL_WIDTH as u16 + matrix_populator::GRID_COLS as u16 + 1;
 
+// Fixed height for the always-visible active-ports panel: 2 borders + 1
+// header row + 7 data rows.
+const PANEL_HEIGHT: u16 = 10;
+
+// Height for the bordered legend box: 2 borders + 1 content row.
+const LEGEND_HEIGHT: u16 = 3;
+
 // Smallest usable height: the grid's own border plus one content row, the
-// selection box, and the legend line.
-const MIN_HEIGHT: u16 = 2 + 1 + 3 + 1;
+// active-ports panel, and the legend box.
+const MIN_HEIGHT: u16 = 2 + 1 + PANEL_HEIGHT + LEGEND_HEIGHT;
 
 // Selected cell in the matrix. `col` is a column into the 128-wide grid,
 // but `row` addresses the *displayed* rows rather than raw grid rows: runs
@@ -47,8 +59,8 @@ impl Cursor {
         self.row = self.row.saturating_sub(1);
     }
 
-    pub fn down(&mut self, ports: &PortTable) {
-        let max_row = matrix_populator::display_row_count(ports).saturating_sub(1);
+    pub fn down(&mut self, ports: &PortTable, last_changed: &[Option<Instant>]) {
+        let max_row = matrix_populator::display_row_count(ports, last_changed).saturating_sub(1);
         self.row = (self.row + 1).min(max_row);
     }
 
@@ -64,12 +76,22 @@ impl Cursor {
 // Port, pid, and process name under the cursor, for the kill-prompt flow to
 // act on. Pid is `None` when the port is closed or its owner couldn't be
 // resolved — callers use that to decide whether there's anything to kill.
-pub fn selected_port_info(ports: &PortTable, cursor: Cursor) -> (u16, Option<u32>, Option<String>) {
-    let port = matrix_populator::selected_port(ports, cursor);
+pub fn selected_port_info(
+    ports: &PortTable,
+    last_changed: &[Option<Instant>],
+    cursor: Cursor,
+) -> (u16, Option<u32>, Option<String>) {
+    let port = matrix_populator::selected_port(ports, last_changed, cursor);
     (port as u16, ports[port].pid, ports[port].process.clone())
 }
 
-pub fn tui(frame: &mut Frame, ports: &PortTable, cursor: &mut Cursor, kill_prompt: &KillPrompt) {
+pub fn tui(
+    frame: &mut Frame,
+    ports: &PortTable,
+    cursor: &mut Cursor,
+    kill_prompt: &KillPrompt,
+    last_changed: &[Option<Instant>],
+) {
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         frame.render_widget(too_small(area), area);
@@ -78,13 +100,13 @@ pub fn tui(frame: &mut Frame, ports: &PortTable, cursor: &mut Cursor, kill_promp
 
     let wrapper = tui_wrapper(frame);
     let matrix_wp = wrapper[0];
-    let selection_wp = wrapper[1];
+    let panel_wp = wrapper[1];
     let legend_wp = wrapper[2];
 
     // Collapsing all-closed rows shrinks the row count as port state
     // changes; re-clamp here so a stale cursor from a larger grid self-heals
     // rather than pointing past the end of the (now shorter) display list.
-    let total_rows = matrix_populator::display_row_count(ports);
+    let total_rows = matrix_populator::display_row_count(ports, last_changed);
     cursor.row = cursor.row.min(total_rows.saturating_sub(1));
 
     // Leave room for the table's own border on each side.
@@ -103,14 +125,41 @@ pub fn tui(frame: &mut Frame, ports: &PortTable, cursor: &mut Cursor, kill_promp
 
     let mut table_state = TableState::default();
     let rows: Vec<Row<'_>> =
-        matrix_populator::ports_matrix(ports, *cursor, body_offset, visible_rows);
+        matrix_populator::ports_matrix(ports, *cursor, body_offset, visible_rows, last_changed);
     let column_count = matrix_populator::GRID_COLS + 2;
     let table = table::generate_table(rows, column_count, matrix_populator::LABEL_WIDTH as u16);
 
     frame.render_stateful_widget(table, matrix_wp, &mut table_state);
-    frame.render_widget(selection(ports, *cursor), selection_wp);
+    render_active_panel(frame, ports, last_changed, *cursor, panel_wp);
     frame.render_widget(legend(), legend_wp);
     kill_popup(frame, kill_prompt);
+}
+
+// Always-visible table of every currently active port, replacing the old
+// single-port selection box: the cursor no longer needs to sit on a cell to
+// see what's running there. The row matching the cursor's selected port is
+// highlighted and the view auto-scrolls to keep it visible, reusing the
+// same `scroll_offset` centering logic the grid's own body scroll uses.
+fn render_active_panel(
+    frame: &mut Frame,
+    ports: &PortTable,
+    last_changed: &[Option<Instant>],
+    cursor: Cursor,
+    area: Rect,
+) {
+    let selected_port = matrix_populator::selected_port(ports, last_changed, cursor) as u16;
+    let entries = panel::active_entries(ports);
+    let selected = panel::selected_index(&entries, selected_port);
+
+    // Leave room for the table's border (2) and header row (1).
+    let visible = area.height.saturating_sub(3) as usize;
+    let offset = scroll_offset(selected.unwrap_or(0), visible, entries.len());
+
+    let table = table::generate_process_table(panel::rows(&entries));
+    let mut state = TableState::new()
+        .with_offset(offset)
+        .with_selected(selected);
+    frame.render_stateful_widget(table, area, &mut state);
 }
 
 // Keeps the cursor roughly centered in the viewport, clamped so the view
@@ -125,37 +174,6 @@ fn scroll_offset(cursor_row: usize, visible_rows: usize, total_rows: usize) -> u
         .min(total_rows - visible_rows)
 }
 
-fn selection(ports: &PortTable, cursor: Cursor) -> Paragraph<'static> {
-    let info = matrix_populator::selected_cell_info(ports, cursor);
-
-    // Only closed ports and collapsed rows are guaranteed to have no owning
-    // process; every other state gets a process span, falling back to an
-    // explicit "unknown" when the scanner couldn't resolve one.
-    let active = matches!(info.label.as_str(), "established" | "listening" | "udp");
-
-    let mut spans = vec![
-        Span::raw(info.header),
-        Span::raw("   "),
-        Span::styled(info.label, Style::default().fg(info.color)),
-    ];
-    match info.process {
-        Some(process) => {
-            spans.push(Span::raw("   "));
-            spans.push(Span::raw(process));
-        }
-        None if active => {
-            spans.push(Span::raw("   "));
-            spans.push(Span::styled(
-                "unknown process",
-                Style::default().fg(Color::DarkGray),
-            ));
-        }
-        None => {}
-    }
-
-    Paragraph::new(Line::from(spans)).block(Block::new().borders(Borders::ALL))
-}
-
 fn legend() -> Paragraph<'static> {
     let line = Line::from(vec![
         Span::styled("listening", Style::default().fg(Color::Rgb(140, 50, 220))),
@@ -167,7 +185,7 @@ fn legend() -> Paragraph<'static> {
         Span::styled("closed", Style::default().fg(Color::Rgb(40, 40, 40))),
         Span::raw("      arrows to move      k to kill      q to quit"),
     ]);
-    Paragraph::new(line)
+    Paragraph::new(line).block(Block::new().borders(Borders::ALL).title("legend"))
 }
 
 // Centered modal for the kill-confirmation flow; renders nothing while
@@ -231,8 +249,8 @@ fn tui_wrapper(frame: &mut Frame) -> Rc<[Rect]> {
         .direction(Direction::Vertical)
         .constraints(vec![
             Constraint::Min(1),
-            Constraint::Length(3),
-            Constraint::Length(1),
+            Constraint::Length(PANEL_HEIGHT),
+            Constraint::Length(LEGEND_HEIGHT),
         ])
         .split(frame.area())
 }

@@ -34,16 +34,21 @@ fn main() -> io::Result<()> {
 
     let mut cursor = Cursor::default();
     let mut port_table = ports::scan();
+    let mut last_changed: Vec<Option<Instant>> = vec![None; ports::PORT_COUNT];
     let mut last_scan = Instant::now();
     let mut kill_prompt = KillPrompt::default();
 
     let mut should_quit = false;
     while !should_quit {
-        terminal.draw(|frame| layout::tui(frame, &port_table, &mut cursor, &kill_prompt))?;
-        should_quit = handle_events(&mut cursor, &port_table, &mut kill_prompt)?;
+        terminal.draw(|frame| {
+            layout::tui(frame, &port_table, &mut cursor, &kill_prompt, &last_changed)
+        })?;
+        should_quit = handle_events(&mut cursor, &port_table, &last_changed, &mut kill_prompt)?;
 
         if last_scan.elapsed() >= SCAN_INTERVAL {
-            port_table = ports::scan();
+            let new_table = ports::scan();
+            mark_changes(&port_table, &new_table, &mut last_changed);
+            port_table = new_table;
             last_scan = Instant::now();
             kill_prompt.tick(&port_table);
         }
@@ -54,9 +59,28 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
+// Stamps `now` on every port whose full status differs from the previous
+// scan (state flags, bind scope, or owning process/pid) — drives the flash
+// fade in `matrix_populator::fill_row`. `last_changed` persists across
+// frames/scans (unlike `port_table`, which `ports::scan()` rebuilds from
+// scratch every call), so it lives here rather than inside the scan path.
+fn mark_changes(
+    old: &ports::PortTable,
+    new: &ports::PortTable,
+    last_changed: &mut [Option<Instant>],
+) {
+    let now = Instant::now();
+    for port in 0..new.len() {
+        if old[port] != new[port] {
+            last_changed[port] = Some(now);
+        }
+    }
+}
+
 fn handle_events(
     cursor: &mut Cursor,
     port_table: &ports::PortTable,
+    last_changed: &[Option<Instant>],
     kill_prompt: &mut KillPrompt,
 ) -> io::Result<bool> {
     if event::poll(Duration::from_millis(50))? {
@@ -69,10 +93,10 @@ fn handle_events(
                 match key.code {
                     KeyCode::Char('q') => return Ok(true),
                     KeyCode::Up => cursor.up(),
-                    KeyCode::Down => cursor.down(port_table),
+                    KeyCode::Down => cursor.down(port_table, last_changed),
                     KeyCode::Left => cursor.left(),
                     KeyCode::Right => cursor.right(),
-                    KeyCode::Char('k') => match selected_target(cursor, port_table) {
+                    KeyCode::Char('k') => match selected_target(cursor, port_table, last_changed) {
                         Some(target) => kill_prompt.request(target),
                         None => {
                             *kill_prompt =
@@ -99,8 +123,12 @@ fn handle_prompt_key(code: KeyCode, kill_prompt: &mut KillPrompt) {
     }
 }
 
-fn selected_target(cursor: &Cursor, port_table: &ports::PortTable) -> Option<Target> {
-    let (port, pid, process) = layout::selected_port_info(port_table, *cursor);
+fn selected_target(
+    cursor: &Cursor,
+    port_table: &ports::PortTable,
+    last_changed: &[Option<Instant>],
+) -> Option<Target> {
+    let (port, pid, process) = layout::selected_port_info(port_table, last_changed, *cursor);
     let pid = pid?;
     Some(Target {
         port,

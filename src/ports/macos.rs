@@ -34,12 +34,20 @@ pub fn scan(table: &mut [PortStatus]) {
             "TCP" => {
                 if name.contains("LISTEN") {
                     table[port as usize].tcp_listen = true;
+                    if is_wildcard_local(&name) {
+                        table[port as usize].bind_global = true;
+                    }
                 }
                 if name.contains("ESTABLISHED") {
                     table[port as usize].tcp_established = true;
                 }
             }
-            "UDP" => table[port as usize].udp_active = true,
+            "UDP" => {
+                table[port as usize].udp_active = true;
+                if is_wildcard_local(&name) {
+                    table[port as usize].bind_global = true;
+                }
+            }
             _ => continue,
         }
         table[port as usize].process = Some(format!("{command} ({pid})"));
@@ -47,8 +55,17 @@ pub fn scan(table: &mut [PortStatus]) {
     }
 }
 
-fn local_port(name: &str) -> Option<u16> {
+fn local_addr(name: &str) -> Option<&str> {
     let local = name.split("->").next()?;
-    let local = local.split_whitespace().next()?;
-    local.rsplit(':').next()?.parse().ok()
+    local.split_whitespace().next()
+}
+
+fn local_port(name: &str) -> Option<u16> {
+    local_addr(name)?.rsplit(':').next()?.parse().ok()
+}
+
+// lsof prints the wildcard bind as a bare `*` regardless of address family,
+// e.g. "*:5432 (LISTEN)" vs "127.0.0.1:5432 (LISTEN)".
+fn is_wildcard_local(name: &str) -> bool {
+    local_addr(name).is_some_and(|addr| addr.starts_with('*'))
 }

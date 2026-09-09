@@ -22,7 +22,12 @@ fn scan_tcp(path: &str, table: &mut [PortStatus], inodes: &HashMap<u64, (String,
             continue;
         };
         match fields.get(3) {
-            Some(&"0A") => table[port as usize].tcp_listen = true,
+            Some(&"0A") => {
+                table[port as usize].tcp_listen = true;
+                if is_wildcard(&fields) {
+                    table[port as usize].bind_global = true;
+                }
+            }
             Some(&"01") => table[port as usize].tcp_established = true,
             _ => continue,
         }
@@ -39,6 +44,9 @@ fn scan_udp(path: &str, table: &mut [PortStatus], inodes: &HashMap<u64, (String,
         let fields: Vec<&str> = line.split_whitespace().collect();
         if let Some(port) = local_port(&fields) {
             table[port as usize].udp_active = true;
+            if is_wildcard(&fields) {
+                table[port as usize].bind_global = true;
+            }
             set_process(&mut table[port as usize], &fields, inodes);
         }
     }
@@ -54,10 +62,20 @@ fn set_process(status: &mut PortStatus, fields: &[&str], inodes: &HashMap<u64, (
 }
 
 // `local_address` (field 1) is formatted as `HEXIP:HEXPORT`.
+fn local_addr_hex(fields: &[&str]) -> Option<&str> {
+    fields.get(1)?.split(':').next()
+}
+
 fn local_port(fields: &[&str]) -> Option<u16> {
     let addr = fields.get(1)?;
     let port_hex = addr.split(':').nth(1)?;
     u16::from_str_radix(port_hex, 16).ok()
+}
+
+// All-zero IP hex (8 chars for IPv4 rows in tcp/udp, 32 for IPv6 rows in
+// tcp6/udp6) is the kernel's encoding of 0.0.0.0 / ::.
+fn is_wildcard(fields: &[&str]) -> bool {
+    local_addr_hex(fields).is_some_and(|hex| hex.chars().all(|c| c == '0'))
 }
 
 // Field 9 (0-indexed) of a `/proc/net/{tcp,udp}` row is the socket's inode,

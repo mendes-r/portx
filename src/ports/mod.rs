@@ -8,11 +8,19 @@ mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq)]
 pub struct PortStatus {
     pub tcp_listen: bool,
     pub tcp_established: bool,
     pub udp_active: bool,
+    // True when the LISTEN/UDP scan line for this port showed the wildcard
+    // local address (0.0.0.0/:: on Linux, `*` on macOS) rather than a
+    // loopback/specific-interface bind. Never set from an ESTABLISHED line:
+    // a connected socket's local address is always concrete once the
+    // handshake completes, so "bound wide open" isn't meaningful there.
+    // Meaningful only when `tcp_listen` or `udp_active` is also set;
+    // rendering code re-checks that before using it.
+    pub bind_global: bool,
     // Process backing whichever state above is set, formatted as "name (pid)".
     // Best-effort: left `None` when the owning process can't be resolved
     // (e.g. it belongs to another user and we lack permission to inspect it).
@@ -24,8 +32,10 @@ pub struct PortStatus {
 
 pub type PortTable = Vec<PortStatus>;
 
+pub const PORT_COUNT: usize = 65536;
+
 pub fn scan() -> PortTable {
-    let mut table = vec![PortStatus::default(); 65536];
+    let mut table = vec![PortStatus::default(); PORT_COUNT];
 
     #[cfg(target_os = "linux")]
     linux::scan(&mut table);

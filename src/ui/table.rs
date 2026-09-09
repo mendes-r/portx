@@ -5,6 +5,10 @@ use ratatui::{
     widgets::{Block, Borders, Row, Table},
 };
 
+fn row_highlight_style() -> Style {
+    Style::new().add_modifier(Modifier::REVERSED)
+}
+
 pub fn generate_table(
     rows: Vec<Row<'static>>,
     column_count: usize,
@@ -13,11 +17,29 @@ pub fn generate_table(
     let widths = widths_constraints(column_count, label_width);
 
     Table::new(rows, widths)
-        .block(Block::new().title("matrix"))
         .column_spacing(0)
-        .row_highlight_style(Style::new().add_modifier(Modifier::REVERSED))
+        .row_highlight_style(row_highlight_style())
         .highlight_symbol(">>")
-        .block(Block::new().borders(Borders::ALL))
+        .block(Block::new().borders(Borders::ALL).title("port matrix"))
+}
+
+// Always-visible list of every currently active port/process. Unlike
+// `generate_table`'s 128 single-width grid columns, these are ordinary text
+// columns: port number, state label, owning process.
+pub fn generate_process_table(rows: Vec<Row<'static>>) -> Table<'static> {
+    let widths = [
+        Constraint::Length(6),  // "65535"
+        Constraint::Length(12), // "established"
+        Constraint::Fill(1),    // process name, variable width
+    ];
+    Table::new(rows, widths)
+        .header(
+            Row::new(vec!["port", "state", "process"])
+                .style(Style::new().add_modifier(Modifier::BOLD)),
+        )
+        .column_spacing(1)
+        .row_highlight_style(row_highlight_style())
+        .block(Block::new().borders(Borders::ALL).title("active ports"))
 }
 
 fn widths_constraints(column_count: usize, label_width: u16) -> Vec<Constraint> {
