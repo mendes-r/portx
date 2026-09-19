@@ -8,6 +8,50 @@ mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum TcpState {
+    #[default]
+    None,
+    Listen,
+    Established,
+    SynSent,
+    SynRecv,
+    FinWait1,
+    FinWait2,
+    TimeWait,
+    Close,
+    CloseWait,
+    LastAck,
+    Closing,
+}
+
+impl TcpState {
+    pub fn label(self) -> &'static str {
+        match self {
+            TcpState::None => "-",
+            TcpState::Listen => "listen",
+            TcpState::Established => "established",
+            TcpState::SynSent => "syn_sent",
+            TcpState::SynRecv => "syn_recv",
+            TcpState::FinWait1 => "fin_wait1",
+            TcpState::FinWait2 => "fin_wait2",
+            TcpState::TimeWait => "time_wait",
+            TcpState::Close => "close",
+            TcpState::CloseWait => "close_wait",
+            TcpState::LastAck => "last_ack",
+            TcpState::Closing => "closing",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum Protocol {
+    #[default]
+    None,
+    Tcp,
+    Udp,
+}
+
 #[derive(Clone, Default, PartialEq)]
 pub struct PortStatus {
     pub tcp_listen: bool,
@@ -28,6 +72,18 @@ pub struct PortStatus {
     // Same process, as a raw pid, so it can be signaled (see `terminate`/
     // `force_kill`) without re-parsing the display string above.
     pub pid: Option<u32>,
+    // Full TCP state (superset of `tcp_listen`/`tcp_established`, which stay
+    // as a derived compatibility layer for the grid's rendering code). Left
+    // at its default (`None`) for UDP rows.
+    pub tcp_state: TcpState,
+    pub protocol: Protocol,
+    // "ip:port" of the remote peer. Only meaningful for TCP rows with an
+    // actual connection (e.g. established); `None` for LISTEN rows, which
+    // have no peer yet.
+    pub remote_addr: Option<String>,
+    pub uid: Option<u32>,
+    // Resolved from `uid` where possible; `None` if the lookup fails.
+    pub owner: Option<String>,
 }
 
 pub type PortTable = Vec<PortStatus>;

@@ -28,21 +28,35 @@ fn flash_weight(last_changed: Option<Instant>) -> f32 {
 // fade, a coarser "something changed in this row" signal alongside the
 // precise per-cell flash, useful since a single changed cell can be easy to
 // spot-miss among 128 columns.
-fn row_flash_weight(row: usize, last_changed: &[Option<Instant>]) -> f32 {
-    let base = row * GRID_COLS;
-    last_changed[base..base + GRID_COLS]
+fn row_flash_weight(row: usize, last_changed: &[Option<Instant>], grid_cols: usize) -> f32 {
+    let base = row * grid_cols;
+    let end = (base + grid_cols).min(last_changed.len());
+    last_changed[base..end]
         .iter()
         .map(|&t| flash_weight(t))
         .fold(0.0, f32::max)
 }
 
-// The port space is a 128x512 grid (row = port / 128, col = port % 128,
-// 128 * 512 = 65536). 128 columns fits comfortably in an ordinary terminal
-// window, unlike a square 256x256 layout would — the height is handled by
-// scrolling a viewport of rows instead, so every rendered cell still maps
-// to exactly one real port.
-pub const GRID_COLS: usize = 128;
-pub const GRID_ROWS: usize = 512;
+// The port space is a grid (row = port / grid_cols, col = port % grid_cols).
+// grid_cols grows continuously with terminal width between these bounds
+// instead of staying fixed; 128 fits comfortably in an ordinary terminal
+// window, and 1024 keeps rows from shrinking to an unreadably small count.
+// grid_cols need not evenly divide PORT_COUNT: grid_rows is a ceiling
+// division, so the final row is a partial one, its unused trailing cells
+// rendered blank by `fill_row` rather than indexing past the last real port.
+pub const MIN_GRID_COLS: usize = 128;
+pub const MAX_GRID_COLS: usize = 1024;
+
+// Column count that fills `available_width` (after reserving the label
+// column and right margin), clamped to [MIN_GRID_COLS, MAX_GRID_COLS].
+pub fn grid_cols(available_width: u16) -> usize {
+    let usable = available_width.saturating_sub(LABEL_WIDTH as u16 + 1) as usize;
+    usable.clamp(MIN_GRID_COLS, MAX_GRID_COLS)
+}
+
+pub fn grid_rows(grid_cols: usize) -> usize {
+    crate::ports::PORT_COUNT.div_ceil(grid_cols)
+}
 
 // Right-edge sliver for the vertical grid line, paired with a real
 // underline (a separate render attribute, not a glyph) for the horizontal
@@ -58,28 +72,39 @@ const GRID_GLYPH: &str = "▕";
 const CURSOR_GLYPH: &str = "█";
 
 // Width of the row's port-range label column — exactly wide enough for the
-// widest label, "65408-65535" (11 characters); right-aligned, so shorter
-// labels pad out on the left instead of needing a spacer column.
+// widest label, "65408-65535" (11 characters); left-aligned, so shorter
+// labels pad out on the right instead of needing a spacer column.
 pub const LABEL_WIDTH: usize = 11;
 
-// Rows covering the well-known ports (0-1023, i.e. rows 0-7 at 128 columns
-// per row) always render individually (never collapsing into a black bar)
-// and stay pinned at the top of the viewport, so that range is visible at
-// all times regardless of what's active on it or where the cursor scrolls.
-pub const PINNED_ROWS: usize = 1024 / GRID_COLS;
+// Rows covering the well-known ports (0-1023) always render individually
+// (never collapsing into a black bar) and stay pinned at the top of the
+// viewport, so that range is visible at all times regardless of what's
+// active on it or where the cursor scrolls. Ceiling division so a row that
+// straddles the 1024 boundary (grid_cols not a divisor of 1024) is still
+// pinned in full rather than split.
+pub fn pinned_rows(grid_cols: usize) -> usize {
+    1024usize.div_ceil(grid_cols)
+}
 
 // True when every port in `row` is closed and none is currently flashing.
-// Rows within `PINNED_ROWS` are never considered closed, regardless of
-// their actual state. A flashing port (e.g. one that just closed) keeps its
-// row visible for the full fade window even though its `PortStatus` alone
-// would call the row all-closed — otherwise a change could flash and vanish
-// in the same frame its row collapses out of the display list.
-fn row_is_closed(row: usize, ports: &PortTable, last_changed: &[Option<Instant>]) -> bool {
-    if row < PINNED_ROWS {
+// Rows within `pinned_rows(grid_cols)` are never considered closed,
+// regardless of their actual state. A flashing port (e.g. one that just
+// closed) keeps its row visible for the full fade window even though its
+// `PortStatus` alone would call the row all-closed — otherwise a change
+// could flash and vanish in the same frame its row collapses out of the
+// display list.
+fn row_is_closed(
+    row: usize,
+    ports: &PortTable,
+    last_changed: &[Option<Instant>],
+    grid_cols: usize,
+) -> bool {
+    if row < pinned_rows(grid_cols) {
         return false;
     }
-    let base = row * GRID_COLS;
-    (base..base + GRID_COLS).all(|port| {
+    let base = row * grid_cols;
+    let end = (base + grid_cols).min(crate::ports::PORT_COUNT);
+    (base..end).all(|port| {
         !ports[port].tcp_listen
             && !ports[port].tcp_established
             && !ports[port].udp_active
@@ -88,58 +113,91 @@ fn row_is_closed(row: usize, ports: &PortTable, last_changed: &[Option<Instant>]
 }
 
 // Real grid rows with anything to show, in ascending order — every row
-// within `PINNED_ROWS`, plus every other row that isn't all-closed. Runs of
-// all-closed rows outside `PINNED_ROWS` are dropped entirely rather than
-// being rendered as rows of their own; `Cursor::row`/scrolling operate on
-// this list, so the number of display rows shrinks and grows as port state
-// changes.
-fn build_display_rows(ports: &PortTable, last_changed: &[Option<Instant>]) -> Vec<usize> {
-    (0..GRID_ROWS)
-        .filter(|&row| !row_is_closed(row, ports, last_changed))
+// within `pinned_rows(grid_cols)`, plus every other row that isn't
+// all-closed. Runs of all-closed rows outside the pinned head are dropped
+// entirely rather than being rendered as rows of their own; `Cursor::row`/
+// scrolling operate on this list, so the number of display rows shrinks and
+// grows as port state changes.
+fn build_display_rows(
+    ports: &PortTable,
+    last_changed: &[Option<Instant>],
+    grid_cols: usize,
+) -> Vec<usize> {
+    (0..grid_rows(grid_cols))
+        .filter(|&row| !row_is_closed(row, ports, last_changed, grid_cols))
         .collect()
 }
 
 // Number of rows the grid renders as, after hiding closed runs — always <=
-// GRID_ROWS, and what `Cursor::row`/scrolling should treat as the row count
-// instead of the raw GRID_ROWS constant.
-pub fn display_row_count(ports: &PortTable, last_changed: &[Option<Instant>]) -> usize {
-    build_display_rows(ports, last_changed).len()
+// grid_rows(grid_cols), and what `Cursor::row`/scrolling should treat as the
+// row count instead of the raw row count.
+pub fn display_row_count(
+    ports: &PortTable,
+    last_changed: &[Option<Instant>],
+    grid_cols: usize,
+) -> usize {
+    build_display_rows(ports, last_changed, grid_cols).len()
 }
 
 // Raw port number under the cursor, reversing the same display-row mapping
-// `ports_matrix` renders with.
-pub fn selected_port(ports: &PortTable, last_changed: &[Option<Instant>], cursor: Cursor) -> usize {
-    let display_rows = build_display_rows(ports, last_changed);
+// `ports_matrix` renders with. Clamped to `PORT_COUNT - 1`: the final grid
+// row can be partial (grid_cols need not divide PORT_COUNT), so a cursor
+// sitting past its last real column would otherwise land past the end of
+// the port table.
+pub fn selected_port(
+    ports: &PortTable,
+    last_changed: &[Option<Instant>],
+    cursor: Cursor,
+    grid_cols: usize,
+) -> usize {
+    let display_rows = build_display_rows(ports, last_changed, grid_cols);
     let idx = cursor.row.min(display_rows.len().saturating_sub(1));
-    display_rows[idx] * GRID_COLS + cursor.col
+    (display_rows[idx] * grid_cols + cursor.col).min(crate::ports::PORT_COUNT - 1)
 }
 
 // Renders `visible_rows` display rows total, made of two parts: the pinned
-// head (display rows `0..PINNED_ROWS`, always shown, never scrolled) and a
-// scrolling body starting at `PINNED_ROWS + body_offset` filling whatever
-// height remains — the viewport `layout::tui` positions to keep the cursor
-// in view within that remaining space, rather than the full display list at
-// once.
+// head (display rows `0..pinned_rows(grid_cols)`, always shown, never
+// scrolled) and a scrolling body starting at `pinned_rows(grid_cols) +
+// body_offset` filling whatever height remains — the viewport `layout::tui`
+// positions to keep the cursor in view within that remaining space, rather
+// than the full display list at once.
 pub fn ports_matrix(
     ports: &PortTable,
     cursor: Cursor,
     body_offset: usize,
     visible_rows: usize,
     last_changed: &[Option<Instant>],
+    grid_cols: usize,
 ) -> Vec<Row<'static>> {
-    let display_rows = build_display_rows(ports, last_changed);
-    let pinned = PINNED_ROWS.min(visible_rows).min(display_rows.len());
+    let display_rows = build_display_rows(ports, last_changed, grid_cols);
+    let pinned = pinned_rows(grid_cols)
+        .min(visible_rows)
+        .min(display_rows.len());
 
     let mut rows = Vec::with_capacity(visible_rows);
     for (display_idx, &row) in display_rows[..pinned].iter().enumerate() {
-        rows.push(fill_row(row, ports, cursor, display_idx, last_changed));
+        rows.push(fill_row(
+            row,
+            ports,
+            cursor,
+            display_idx,
+            last_changed,
+            grid_cols,
+        ));
     }
 
     let body_budget = visible_rows - pinned;
     let body_start = (pinned + body_offset).min(display_rows.len());
     let body_end = (body_start + body_budget).min(display_rows.len());
     for (i, &row) in display_rows[body_start..body_end].iter().enumerate() {
-        rows.push(fill_row(row, ports, cursor, body_start + i, last_changed));
+        rows.push(fill_row(
+            row,
+            ports,
+            cursor,
+            body_start + i,
+            last_changed,
+            grid_cols,
+        ));
     }
 
     rows
@@ -151,13 +209,14 @@ fn fill_row(
     cursor: Cursor,
     display_idx: usize,
     last_changed: &[Option<Instant>],
+    grid_cols: usize,
 ) -> Row<'static> {
-    let mut cells: Vec<Cell> = Vec::with_capacity(GRID_COLS + 2);
+    let mut cells: Vec<Cell> = Vec::with_capacity(grid_cols + 2);
 
-    let range_start = row * GRID_COLS;
-    let range_end = range_start + GRID_COLS - 1;
-    let label = Line::from(format!("{range_start}-{range_end}")).alignment(Alignment::Right);
-    let label_weight = row_flash_weight(row, last_changed);
+    let range_start = row * grid_cols;
+    let range_end = (range_start + grid_cols - 1).min(crate::ports::PORT_COUNT - 1);
+    let label = Line::from(format!("{range_start}-{range_end}")).alignment(Alignment::Left);
+    let label_weight = row_flash_weight(row, last_changed, grid_cols);
     let label_fg = if label_weight > 0.0 {
         color::lerp_color(color::LABEL, color::FLASH, label_weight)
     } else {
@@ -165,10 +224,15 @@ fn fill_row(
     };
     cells.push(Cell::from(label).style(Style::default().fg(label_fg)));
 
-    for content_col in 0..GRID_COLS {
-        let port = row * GRID_COLS + content_col;
+    for content_col in 0..grid_cols {
+        let port = row * grid_cols + content_col;
 
-        let cell = if display_idx == cursor.row && content_col == cursor.col {
+        // The final grid row can be partial (grid_cols need not divide
+        // PORT_COUNT) — trailing columns past the last real port render as
+        // plain blanks rather than indexing off the end of the port table.
+        let cell = if port >= crate::ports::PORT_COUNT {
+            Cell::new("")
+        } else if display_idx == cursor.row && content_col == cursor.col {
             Cell::from(CURSOR_GLYPH).style(Style::default().fg(color::CURSOR))
         } else {
             let status = &ports[port];

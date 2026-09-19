@@ -28,13 +28,12 @@ pub const LABEL: Color = Color::Rgb(128, 128, 128);
 // cursor stays visible no matter what's underneath it.
 pub const CURSOR: Color = Color::White;
 
-// Mirrors `status_color`'s priority (established > listening > udp > closed)
-// so the selection box always names the same state the cell is colored for.
-pub fn status_label(status: &PortStatus) -> &'static str {
-    if status.tcp_established {
-        "established"
-    } else if status.tcp_listen {
-        "listening"
+// Full-detail state label for the active-ports panel: reads `tcp_state`
+// directly so transitional states (CLOSE_WAIT, TIME_WAIT, ...) show up
+// instead of collapsing into "closed".
+pub fn status_label_full(status: &PortStatus) -> &'static str {
+    if status.protocol == crate::ports::Protocol::Tcp {
+        status.tcp_state.label()
     } else if status.udp_active {
         "udp"
     } else {

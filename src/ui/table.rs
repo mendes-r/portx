@@ -29,13 +29,19 @@ pub fn generate_table(
 pub fn generate_process_table(rows: Vec<Row<'static>>) -> Table<'static> {
     let widths = [
         Constraint::Length(6),  // "65535"
-        Constraint::Length(12), // "established"
-        Constraint::Fill(1),    // process name, variable width
+        Constraint::Length(5),  // "proto" header / "tcp"/"udp" values
+        Constraint::Length(12), // "established", "close_wait", ...
+        Constraint::Length(7),  // "global"/"local"
+        Constraint::Length(20), // process name
+        Constraint::Length(10), // owner/username
+        Constraint::Fill(1),    // remote "ip:port", variable width
     ];
     Table::new(rows, widths)
         .header(
-            Row::new(vec!["port", "state", "process"])
-                .style(Style::new().add_modifier(Modifier::BOLD)),
+            Row::new(vec![
+                "port", "proto", "state", "scope", "process", "owner", "remote",
+            ])
+            .style(Style::new().add_modifier(Modifier::BOLD)),
         )
         .column_spacing(1)
         .row_highlight_style(row_highlight_style())

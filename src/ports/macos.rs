@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use super::PortStatus;
+use super::{PortStatus, Protocol, TcpState};
 
 pub fn scan(table: &mut [PortStatus]) {
     let Ok(output) = Command::new("lsof")
@@ -24,34 +24,38 @@ pub fn scan(table: &mut [PortStatus]) {
 
         let command = fields[0];
         let pid = fields[1];
+        let user = fields[2];
         let proto = fields[7];
         let name = fields[8..].join(" ");
         let Some(port) = local_port(&name) else {
             continue;
         };
 
+        let status = &mut table[port as usize];
         match proto {
             "TCP" => {
-                if name.contains("LISTEN") {
-                    table[port as usize].tcp_listen = true;
-                    if is_wildcard_local(&name) {
-                        table[port as usize].bind_global = true;
-                    }
+                let state = tcp_state(&name);
+                status.tcp_state = state;
+                status.protocol = Protocol::Tcp;
+                status.tcp_listen = matches!(state, TcpState::Listen);
+                status.tcp_established = matches!(state, TcpState::Established);
+                if state == TcpState::Listen && is_wildcard_local(&name) {
+                    status.bind_global = true;
                 }
-                if name.contains("ESTABLISHED") {
-                    table[port as usize].tcp_established = true;
-                }
+                status.remote_addr = remote_addr(&name);
             }
             "UDP" => {
-                table[port as usize].udp_active = true;
+                status.udp_active = true;
+                status.protocol = Protocol::Udp;
                 if is_wildcard_local(&name) {
-                    table[port as usize].bind_global = true;
+                    status.bind_global = true;
                 }
             }
             _ => continue,
         }
-        table[port as usize].process = Some(format!("{command} ({pid})"));
-        table[port as usize].pid = pid.parse().ok();
+        status.process = Some(format!("{command} ({pid})"));
+        status.pid = pid.parse().ok();
+        status.owner = Some(user.to_string());
     }
 }
 
@@ -68,4 +72,36 @@ fn local_port(name: &str) -> Option<u16> {
 // e.g. "*:5432 (LISTEN)" vs "127.0.0.1:5432 (LISTEN)".
 fn is_wildcard_local(name: &str) -> bool {
     local_addr(name).is_some_and(|addr| addr.starts_with('*'))
+}
+
+// The remote half of "local->remote (STATE)", with the trailing state
+// stripped. `None` when there's no `->` at all (e.g. a LISTEN row, which
+// has no peer).
+fn remote_addr(name: &str) -> Option<String> {
+    let (_, rest) = name.split_once("->")?;
+    rest.split_whitespace().next().map(str::to_string)
+}
+
+// lsof embeds the TCP state as a parenthesized token at the end of NAME,
+// e.g. "(ESTABLISHED)", "(CLOSE_WAIT)". Unrecognized/missing tokens (UDP
+// rows have none) map to `TcpState::None`.
+fn tcp_state(name: &str) -> TcpState {
+    let Some(start) = name.rfind('(') else {
+        return TcpState::None;
+    };
+    let token = name[start + 1..].trim_end_matches(')');
+    match token {
+        "LISTEN" => TcpState::Listen,
+        "ESTABLISHED" => TcpState::Established,
+        "SYN_SENT" => TcpState::SynSent,
+        "SYN_RCVD" => TcpState::SynRecv,
+        "FIN_WAIT_1" => TcpState::FinWait1,
+        "FIN_WAIT_2" => TcpState::FinWait2,
+        "TIME_WAIT" => TcpState::TimeWait,
+        "CLOSED" => TcpState::Close,
+        "CLOSE_WAIT" => TcpState::CloseWait,
+        "LAST_ACK" => TcpState::LastAck,
+        "CLOSING" => TcpState::Closing,
+        _ => TcpState::None,
+    }
 }

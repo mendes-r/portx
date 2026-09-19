@@ -20,7 +20,7 @@ use ratatui::{
 };
 
 use kill::{KillPrompt, Target};
-use layout::Cursor;
+use layout::{Cursor, WidthMode};
 
 // Port state changes slowly and scanning it isn't free, so it's only
 // refreshed on this cadence rather than every frame — that would otherwise
@@ -37,13 +37,27 @@ fn main() -> io::Result<()> {
     let mut last_changed: Vec<Option<Instant>> = vec![None; ports::PORT_COUNT];
     let mut last_scan = Instant::now();
     let mut kill_prompt = KillPrompt::default();
+    let mut width_mode = WidthMode::default();
 
     let mut should_quit = false;
     while !should_quit {
         terminal.draw(|frame| {
-            layout::tui(frame, &port_table, &mut cursor, &kill_prompt, &last_changed)
+            layout::tui(
+                frame,
+                &port_table,
+                &mut cursor,
+                &kill_prompt,
+                &last_changed,
+                width_mode,
+            )
         })?;
-        should_quit = handle_events(&mut cursor, &port_table, &last_changed, &mut kill_prompt)?;
+        should_quit = handle_events(
+            &mut cursor,
+            &port_table,
+            &last_changed,
+            &mut kill_prompt,
+            &mut width_mode,
+        )?;
 
         if last_scan.elapsed() >= SCAN_INTERVAL {
             let new_table = ports::scan();
@@ -82,6 +96,7 @@ fn handle_events(
     port_table: &ports::PortTable,
     last_changed: &[Option<Instant>],
     kill_prompt: &mut KillPrompt,
+    width_mode: &mut WidthMode,
 ) -> io::Result<bool> {
     if event::poll(Duration::from_millis(50))? {
         if let Event::Key(key) = event::read()? {
@@ -96,6 +111,7 @@ fn handle_events(
                     KeyCode::Down => cursor.down(port_table, last_changed),
                     KeyCode::Left => cursor.left(),
                     KeyCode::Right => cursor.right(),
+                    KeyCode::Char('w') => width_mode.cycle(),
                     KeyCode::Char('k') => match selected_target(cursor, port_table, last_changed) {
                         Some(target) => kill_prompt.request(target),
                         None => {
