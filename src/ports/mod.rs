@@ -52,6 +52,60 @@ pub enum Protocol {
     Udp,
 }
 
+// Whether a connection was initiated by this machine ("outbound", we
+// dialed out) or by a remote peer ("inbound", someone connected to us).
+// UDP is connectionless and never gets past `Unknown`.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum Direction {
+    #[default]
+    Unknown,
+    Inbound,
+    Outbound,
+}
+
+impl Direction {
+    pub fn label(self) -> &'static str {
+        match self {
+            Direction::Unknown => "-",
+            Direction::Inbound => "in",
+            Direction::Outbound => "out",
+        }
+    }
+}
+
+// Best-effort inference of connection direction. The kernel only records
+// who dialed while the handshake is in flight (SYN_SENT = we sent the
+// SYN, SYN_RECV = we answered one), so once a connection reaches
+// ESTABLISHED (or later, e.g. CLOSE_WAIT) there's no direct flag left to
+// read. Fall back to the well-known-port convention instead: servers
+// typically listen on a low, well-known local port while the initiating
+// side dials out from a high ephemeral one. This is a heuristic, not a
+// guarantee — a server on a high port (common for dev tools) or a
+// high-port-to-high-port connection reads as `Unknown` rather than
+// guessed wrong.
+pub fn infer_tcp_direction(
+    state: TcpState,
+    local_port: u16,
+    remote_addr: Option<&str>,
+) -> Direction {
+    match state {
+        TcpState::SynSent => return Direction::Outbound,
+        TcpState::SynRecv => return Direction::Inbound,
+        TcpState::Listen | TcpState::None => return Direction::Unknown,
+        _ => {}
+    }
+
+    let remote_port = remote_addr
+        .and_then(|addr| addr.rsplit(':').next())
+        .and_then(|p| p.parse::<u16>().ok());
+
+    match remote_port {
+        Some(remote_port) if local_port < 1024 && remote_port >= 1024 => Direction::Inbound,
+        Some(remote_port) if remote_port < 1024 && local_port >= 1024 => Direction::Outbound,
+        _ => Direction::Unknown,
+    }
+}
+
 #[derive(Clone, Default, PartialEq)]
 pub struct PortStatus {
     pub tcp_listen: bool,
@@ -84,6 +138,8 @@ pub struct PortStatus {
     pub uid: Option<u32>,
     // Resolved from `uid` where possible; `None` if the lookup fails.
     pub owner: Option<String>,
+    // See `infer_tcp_direction`. Stays `Unknown` for UDP and closed ports.
+    pub direction: Direction,
 }
 
 pub type PortTable = Vec<PortStatus>;

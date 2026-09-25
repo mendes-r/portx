@@ -39,12 +39,13 @@ fn row_flash_weight(row: usize, last_changed: &[Option<Instant>], grid_cols: usi
 
 // The port space is a grid (row = port / grid_cols, col = port % grid_cols).
 // grid_cols grows continuously with terminal width between these bounds
-// instead of staying fixed; 128 fits comfortably in an ordinary terminal
-// window, and 1024 keeps rows from shrinking to an unreadably small count.
+// instead of staying fixed; 64 is the narrowest a `w`-cycled fixed width can
+// go (see `WidthMode::FIXED_STEPS`), and 1024 keeps rows from shrinking to
+// an unreadably small count.
 // grid_cols need not evenly divide PORT_COUNT: grid_rows is a ceiling
 // division, so the final row is a partial one, its unused trailing cells
 // rendered blank by `fill_row` rather than indexing past the last real port.
-pub const MIN_GRID_COLS: usize = 128;
+pub const MIN_GRID_COLS: usize = 64;
 pub const MAX_GRID_COLS: usize = 1024;
 
 // Column count that fills `available_width` (after reserving the label
@@ -211,11 +212,15 @@ fn fill_row(
     last_changed: &[Option<Instant>],
     grid_cols: usize,
 ) -> Row<'static> {
-    let mut cells: Vec<Cell> = Vec::with_capacity(grid_cols + 2);
+    let mut cells: Vec<Cell> = Vec::with_capacity(grid_cols + 4);
+
+    // Left margin, paired with the right one below, to center the grid
+    // horizontally in the table area.
+    cells.push(Cell::new(""));
 
     let range_start = row * grid_cols;
     let range_end = (range_start + grid_cols - 1).min(crate::ports::PORT_COUNT - 1);
-    let label = Line::from(format!("{range_start}-{range_end}")).alignment(Alignment::Left);
+    let label = Line::from(format!("{range_start}-{range_end}")).alignment(Alignment::Right);
     let label_weight = row_flash_weight(row, last_changed, grid_cols);
     let label_fg = if label_weight > 0.0 {
         color::lerp_color(color::LABEL, color::FLASH, label_weight)
@@ -223,6 +228,9 @@ fn fill_row(
         color::LABEL
     };
     cells.push(Cell::from(label).style(Style::default().fg(label_fg)));
+
+    // One-column gap between the label and the grid itself.
+    cells.push(Cell::new(""));
 
     for content_col in 0..grid_cols {
         let port = row * grid_cols + content_col;

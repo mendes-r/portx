@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use super::{PortStatus, Protocol, TcpState};
+use super::{infer_tcp_direction, PortStatus, Protocol, TcpState};
 
 pub fn scan(table: &mut [PortStatus]) {
     let Ok(output) = Command::new("lsof")
@@ -43,6 +43,7 @@ pub fn scan(table: &mut [PortStatus]) {
                     status.bind_global = true;
                 }
                 status.remote_addr = remote_addr(&name);
+                status.direction = infer_tcp_direction(state, port, status.remote_addr.as_deref());
             }
             "UDP" => {
                 status.udp_active = true;

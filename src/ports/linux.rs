@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 
-use super::{PortStatus, Protocol, TcpState};
+use super::{infer_tcp_direction, PortStatus, Protocol, TcpState};
 
 pub fn scan(table: &mut [PortStatus]) {
     let inodes = build_inode_map();
@@ -60,6 +60,7 @@ fn scan_tcp(
             status.bind_global = true;
         }
         status.remote_addr = remote_addr(&fields);
+        status.direction = infer_tcp_direction(state, port, status.remote_addr.as_deref());
         set_process(status, &fields, inodes);
         set_owner(status, &fields, usernames);
     }

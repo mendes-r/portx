@@ -132,6 +132,14 @@ fn hsl_to_rgb(h: f64, s: f64, l: f64) -> Color {
     Color::Rgb(to_u8(r1), to_u8(g1), to_u8(b1))
 }
 
+pub fn direction_color(direction: crate::ports::Direction) -> Color {
+    match direction {
+        crate::ports::Direction::Inbound => Color::Rgb(0, 200, 120), // green: someone connected to us
+        crate::ports::Direction::Outbound => Color::Rgb(230, 160, 0), // amber-ish: we connected out
+        crate::ports::Direction::Unknown => LABEL,
+    }
+}
+
 // Linear per-channel blend, used by the flash fade. Only `Color::Rgb` is
 // handled since every color in this module is `Rgb`; anything else falls
 // through to `to` rather than panicking.

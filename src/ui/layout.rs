@@ -27,11 +27,14 @@ use crate::ports::PortTable;
 // Dynamic/Private Ports (49152–65535)
 
 // Terminal columns needed for the smallest viable grid: the port-range
-// label column, the minimum real-port columns, and a 1-column margin on the
-// right. The grid itself can grow wider than this floor on a roomier
-// terminal (see `matrix_populator::grid_cols`). Unlike width, height isn't
-// required up front — the grid scrolls, so any number of rows renders a
-// partial view of it.
+// label column, the minimum real-port columns, and a 1-column margin
+// reserved on one side (see `matrix_populator::grid_cols`, which only
+// reserves one; the matching margin on the other side is a `Fill(1)` that
+// simply shrinks to 0 rather than needing space reserved up front — see
+// `table::widths_constraints`). The grid itself can grow wider than this
+// floor on a roomier terminal. Unlike width, height isn't required up
+// front — the grid scrolls, so any number of rows renders a partial view
+// of it.
 const MIN_WIDTH: u16 =
     matrix_populator::LABEL_WIDTH as u16 + matrix_populator::MIN_GRID_COLS as u16 + 1;
 
@@ -58,7 +61,7 @@ pub enum WidthMode {
 }
 
 impl WidthMode {
-    const FIXED_STEPS: [usize; 4] = [128, 256, 512, 1024];
+    const FIXED_STEPS: [usize; 3] = [64, 128, 256];
 
     pub fn cycle(&mut self) {
         *self = match self {
@@ -198,7 +201,10 @@ pub fn tui(
         last_changed,
         grid_cols,
     );
-    let column_count = grid_cols + 2;
+    // +1 label column, +1 spacer between label and grid, +2 blank margins
+    // (left and right; see `table::widths_constraints`, which centers the
+    // grid between them).
+    let column_count = grid_cols + 4;
     let table = table::generate_table(rows, column_count, matrix_populator::LABEL_WIDTH as u16);
 
     render_legend(frame, legend_wp, grid_cols);

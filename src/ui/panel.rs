@@ -58,11 +58,14 @@ pub fn rows(entries: &[ActiveEntry]) -> Vec<Row<'static>> {
             let process_color = color::process_border_color(e.status.process.as_deref());
             let owner = e.status.owner.clone().unwrap_or_default();
             let remote = e.status.remote_addr.clone().unwrap_or_default();
+            let direction = e.status.direction.label();
+            let direction_color = color::direction_color(e.status.direction);
             Row::new(vec![
                 Cell::from(e.port.to_string()),
                 Cell::from(proto),
                 Cell::from(label).style(Style::default().fg(label_color)),
                 Cell::from(scope),
+                Cell::from(direction).style(Style::default().fg(direction_color)),
                 Cell::from(process).style(Style::default().fg(process_color)),
                 Cell::from(owner),
                 Cell::from(remote),
